@@ -9,7 +9,7 @@ import { Pipe } from '../../types';
 export const RangeChart: React.FC = () => {
   const theme = useTheme();
   const svgRef = useRef<SVGSVGElement>(null);
-  const { pipes, allowedCentsDeviation, selectedPipeId, setSelectedPipe } = usePipeStore();
+  const { pipes, allowedCentsDeviation, selectedPipeId, setSelectedPipe, highlightedPipeIds, setHighlightedPipes } = usePipeStore();
 
   const rangeConfig = useMemo(() => {
     const startNote = 'C';
@@ -132,6 +132,12 @@ export const RangeChart: React.FC = () => {
       .style('cursor', 'pointer')
       .on('click', (event, d: Pipe) => {
         setSelectedPipe(d.id);
+      })
+      .on('mouseover', function(event, d) {
+        setHighlightedPipes([d.id]);
+      })
+      .on('mouseout', function(event, d) {
+        setHighlightedPipes([]);
       });
 
     pipeMarkers
@@ -144,20 +150,22 @@ export const RangeChart: React.FC = () => {
         const color = getStatusColor(d.centsDeviation, allowedCentsDeviation, d.status);
         return color.main;
       })
-      .attr('stroke-width', 2)
+      .attr('stroke-width', (d) => (d.id === selectedPipeId || highlightedPipeIds.includes(d.id) ? 3 : 2))
       .attr('stroke-linecap', 'round')
-      .attr('opacity', (d) => (d.id === selectedPipeId ? 1 : 0.7));
+      .attr('opacity', (d) => (d.id === selectedPipeId || highlightedPipeIds.includes(d.id) ? 1 : 0.7));
 
     pipeMarkers
       .append('circle')
       .attr('cx', 0)
       .attr('cy', innerHeight - whiteKeyHeight - 10)
-      .attr('r', (d) => (d.id === selectedPipeId ? 8 : 5))
+      .attr('r', (d) => (d.id === selectedPipeId ? 8 : highlightedPipeIds.includes(d.id) ? 7 : 5))
       .attr('fill', (d) => {
         const color = getStatusColor(d.centsDeviation, allowedCentsDeviation, d.status);
         return color.main;
       })
-      .attr('stroke', theme.palette.background.paper)
+      .attr('stroke', (d) =>
+        highlightedPipeIds.includes(d.id) ? theme.palette.secondary.main : theme.palette.background.paper
+      )
       .attr('stroke-width', 2)
       .style('transition', 'r 0.2s ease');
 
@@ -198,7 +206,7 @@ export const RangeChart: React.FC = () => {
       .attr('font-size', '9px')
       .attr('font-family', "'JetBrains Mono', monospace")
       .text((d) => `${d.toFixed(0)} Hz`);
-  }, [pipes, allowedCentsDeviation, selectedPipeId, rangeConfig, theme, setSelectedPipe]);
+  }, [pipes, allowedCentsDeviation, selectedPipeId, highlightedPipeIds, rangeConfig, theme, setSelectedPipe, setHighlightedPipes]);
 
   const stats = useMemo(() => {
     if (pipes.length === 0) return { min: 0, max: 0, range: 0 };

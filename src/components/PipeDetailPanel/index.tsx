@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -18,11 +18,16 @@ import {
   DialogContent,
   DialogActions,
   TextareaAutosize,
+  Alert,
+  Tooltip,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import CheckIcon from '@mui/icons-material/Check';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import WarningIcon from '@mui/icons-material/Warning';
+import ErrorIcon from '@mui/icons-material/Error';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 import { usePipeStore } from '../../hooks/usePipeStore';
 import { PipeStatus } from '../../types';
 import { CentsGauge } from './CentsGauge';
@@ -39,6 +44,7 @@ export const PipeDetailPanel: React.FC = () => {
   const {
     selectedPipeId,
     pipes,
+    groups,
     allowedCentsDeviation,
     updatePipeFrequency,
     updateTargetFrequency,
@@ -46,6 +52,9 @@ export const PipeDetailPanel: React.FC = () => {
     updatePipe,
     addTrimRecord,
     removePipe,
+    validateFrequency,
+    validateTargetFrequency,
+    movePipeToGroup,
   } = usePipeStore();
 
   const [trimDialogOpen, setTrimDialogOpen] = useState(false);
@@ -53,6 +62,10 @@ export const PipeDetailPanel: React.FC = () => {
   const [newMeasuredFreq, setNewMeasuredFreq] = useState('');
   const [targetFreqInput, setTargetFreqInput] = useState('');
   const [measuredFreqInput, setMeasuredFreqInput] = useState('');
+  const [targetFreqError, setTargetFreqError] = useState<string[]>([]);
+  const [targetFreqWarning, setTargetFreqWarning] = useState<string[]>([]);
+  const [measuredFreqError, setMeasuredFreqError] = useState<string[]>([]);
+  const [measuredFreqWarning, setMeasuredFreqWarning] = useState<string[]>([]);
 
   const selectedPipe = pipes.find((p) => p.id === selectedPipeId);
 
@@ -60,19 +73,44 @@ export const PipeDetailPanel: React.FC = () => {
     if (selectedPipe) {
       setTargetFreqInput(selectedPipe.targetFrequency.toFixed(2));
       setMeasuredFreqInput(selectedPipe.measuredFrequency?.toFixed(2) ?? '');
+      setTargetFreqError([]);
+      setTargetFreqWarning([]);
+      setMeasuredFreqError([]);
+      setMeasuredFreqWarning([]);
     }
   }, [selectedPipe?.id, selectedPipe?.targetFrequency, selectedPipe?.measuredFrequency]);
+
+  const handleTargetFreqChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setTargetFreqInput(value);
+
+    const freq = parseFloat(value);
+    if (value === '' || isNaN(freq)) {
+      setTargetFreqError(['请输入有效数字']);
+      setTargetFreqWarning([]);
+      return;
+    }
+
+    const validation = validateTargetFrequency(freq);
+    setTargetFreqError(validation.errors);
+    setTargetFreqWarning(validation.warnings);
+  };
 
   const handleTargetFreqBlur = () => {
     if (!selectedPipe) return;
     const value = parseFloat(targetFreqInput);
-    if (!isNaN(value) && value > 0) {
-      updateTargetFrequency(selectedPipe.id, value);
-      const newNoteName = getNoteName(value);
-      updatePipe(selectedPipe.id, { noteName: newNoteName });
-    } else {
+    const validation = validateTargetFrequency(value);
+
+    if (!validation.valid) {
       setTargetFreqInput(selectedPipe.targetFrequency.toFixed(2));
+      setTargetFreqError([]);
+      setTargetFreqWarning([]);
+      return;
     }
+
+    updateTargetFrequency(selectedPipe.id, value);
+    const newNoteName = getNoteName(value);
+    updatePipe(selectedPipe.id, { noteName: newNoteName });
   };
 
   const handleTargetFreqKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -82,15 +120,45 @@ export const PipeDetailPanel: React.FC = () => {
     }
   };
 
+  const handleMeasuredFreqChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setMeasuredFreqInput(value);
+
+    if (value === '') {
+      setMeasuredFreqError([]);
+      setMeasuredFreqWarning([]);
+      return;
+    }
+
+    const freq = parseFloat(value);
+    if (isNaN(freq)) {
+      setMeasuredFreqError(['请输入有效数字']);
+      setMeasuredFreqWarning([]);
+      return;
+    }
+
+    const validation = validateFrequency(freq, selectedPipe?.targetFrequency);
+    setMeasuredFreqError(validation.errors);
+    setMeasuredFreqWarning(validation.warnings);
+  };
+
   const handleMeasuredFreqBlur = () => {
     if (!selectedPipe) return;
     const value = parseFloat(measuredFreqInput);
-    if (!isNaN(value) && value > 0) {
-      updatePipeFrequency(selectedPipe.id, value);
-    } else if (measuredFreqInput === '') {
-    } else {
-      setMeasuredFreqInput(selectedPipe.measuredFrequency?.toFixed(2) ?? '');
+
+    if (measuredFreqInput === '') {
+      return;
     }
+
+    const validation = validateFrequency(value, selectedPipe.targetFrequency);
+    if (!validation.valid) {
+      setMeasuredFreqInput(selectedPipe.measuredFrequency?.toFixed(2) ?? '');
+      setMeasuredFreqError([]);
+      setMeasuredFreqWarning([]);
+      return;
+    }
+
+    updatePipeFrequency(selectedPipe.id, value);
   };
 
   const handleMeasuredFreqKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -109,6 +177,21 @@ export const PipeDetailPanel: React.FC = () => {
   const handleNotesChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     if (selectedPipe) {
       updatePipe(selectedPipe.id, { notes: e.target.value });
+    }
+  };
+
+  const handleGroupChange = (e: SelectChangeEvent<string>) => {
+    if (selectedPipe) {
+      const groupId = e.target.value;
+      movePipeToGroup(selectedPipe.id, groupId === 'none' ? undefined : groupId);
+    }
+  };
+
+  const handleSlotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selectedPipe) return;
+    const value = parseInt(e.target.value);
+    if (!isNaN(value) && value > 0) {
+      updatePipe(selectedPipe.id, { slotNumber: value });
     }
   };
 
@@ -141,6 +224,11 @@ export const PipeDetailPanel: React.FC = () => {
       removePipe(selectedPipe.id);
     }
   };
+
+  const currentGroup = useMemo(() => {
+    if (!selectedPipe?.groupId) return null;
+    return groups.find((g) => g.id === selectedPipe.groupId);
+  }, [selectedPipe, groups]);
 
   if (!selectedPipe) {
     return (
@@ -175,6 +263,9 @@ export const PipeDetailPanel: React.FC = () => {
     },
   };
 
+  const hasErrors = targetFreqError.length > 0 || measuredFreqError.length > 0;
+  const hasWarnings = targetFreqWarning.length > 0 || measuredFreqWarning.length > 0;
+
   return (
     <Box
       sx={{
@@ -206,8 +297,25 @@ export const PipeDetailPanel: React.FC = () => {
           />
         </Box>
         <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
-          键位 #{selectedPipe.keyPosition} · 目标频率 {formatFrequency(selectedPipe.targetFrequency)}
+          键位 #{selectedPipe.keyPosition}
+          {selectedPipe.slotNumber && ` · 槽位 ${selectedPipe.slotNumber}`}
+          {' · '}
+          目标频率 {formatFrequency(selectedPipe.targetFrequency)}
         </Typography>
+
+        {selectedPipe.needsReviewReason && selectedPipe.status === 'needs-review' && (
+          <Box sx={{ mt: 1.5 }}>
+            <Alert
+              severity="warning"
+              icon={<WarningIcon fontSize="small" />}
+              sx={{ fontSize: '0.75rem', '& .MuiAlert-message': { padding: 0 } }}
+            >
+              <Typography variant="caption" sx={{ fontWeight: 500 }}>
+                待复核原因：{selectedPipe.needsReviewReason}
+              </Typography>
+            </Alert>
+          </Box>
+        )}
       </Box>
 
       <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
@@ -232,13 +340,36 @@ export const PipeDetailPanel: React.FC = () => {
             type="text"
             label="目标频率 (Hz)"
             value={targetFreqInput}
-            onChange={(e) => setTargetFreqInput(e.target.value)}
+            onChange={handleTargetFreqChange}
             onBlur={handleTargetFreqBlur}
             onKeyDown={handleTargetFreqKeyDown}
             size="small"
-            sx={{ mb: 2, ...textFieldSx }}
+            sx={{ mb: 1, ...textFieldSx }}
+            error={targetFreqError.length > 0}
+            helperText={
+              targetFreqError.length > 0
+                ? targetFreqError.join('; ')
+                : targetFreqWarning.length > 0
+                ? targetFreqWarning.join('; ')
+                : ''
+            }
             slotProps={{
-              htmlInput: { inputMode: 'decimal' },
+              formHelperText: {
+                sx: {
+                  color:
+                    targetFreqError.length > 0
+                      ? theme.palette.error.main
+                      : theme.palette.warning.main,
+                },
+              },
+              input: {
+                inputMode: 'decimal',
+                endAdornment: targetFreqError.length > 0 ? (
+                  <ErrorIcon color="error" sx={{ fontSize: 18 }} />
+                ) : targetFreqWarning.length > 0 ? (
+                  <WarningIcon color="warning" sx={{ fontSize: 18 }} />
+                ) : null,
+              },
             }}
           />
 
@@ -247,14 +378,51 @@ export const PipeDetailPanel: React.FC = () => {
             type="text"
             label="实测频率 (Hz)"
             value={measuredFreqInput}
-            onChange={(e) => setMeasuredFreqInput(e.target.value)}
+            onChange={handleMeasuredFreqChange}
             onBlur={handleMeasuredFreqBlur}
             onKeyDown={handleMeasuredFreqKeyDown}
             size="small"
             placeholder="输入实测频率"
-            sx={textFieldSx}
+            sx={{ mb: 1, ...textFieldSx }}
+            error={measuredFreqError.length > 0}
+            helperText={
+              measuredFreqError.length > 0
+                ? measuredFreqError.join('; ')
+                : measuredFreqWarning.length > 0
+                ? measuredFreqWarning.join('; ')
+                : ''
+            }
             slotProps={{
-              htmlInput: { inputMode: 'decimal' },
+              formHelperText: {
+                sx: {
+                  color:
+                    measuredFreqError.length > 0
+                      ? theme.palette.error.main
+                      : theme.palette.warning.main,
+                },
+              },
+              input: {
+                inputMode: 'decimal',
+                endAdornment: measuredFreqError.length > 0 ? (
+                  <ErrorIcon color="error" sx={{ fontSize: 18 }} />
+                ) : measuredFreqWarning.length > 0 ? (
+                  <WarningIcon color="warning" sx={{ fontSize: 18 }} />
+                ) : null,
+              },
+            }}
+          />
+
+          <TextField
+            fullWidth
+            type="number"
+            label="槽位号"
+            value={selectedPipe.slotNumber ?? ''}
+            onChange={handleSlotChange}
+            size="small"
+            placeholder="可选"
+            sx={{ mb: 1, ...textFieldSx }}
+            slotProps={{
+              htmlInput: { min: 1 },
             }}
           />
         </Box>
@@ -278,6 +446,41 @@ export const PipeDetailPanel: React.FC = () => {
               <MenuItem value="needs-review">待复核</MenuItem>
             </Select>
           </FormControl>
+
+          <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+            <InputLabel>所属分组</InputLabel>
+            <Select
+              value={selectedPipe.groupId || 'none'}
+              label="所属分组"
+              onChange={handleGroupChange}
+            >
+              <MenuItem value="none">未分组</MenuItem>
+              {groups.map((g) => (
+                <MenuItem key={g.id} value={g.id}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box
+                      sx={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        backgroundColor: g.color,
+                      }}
+                    />
+                    {g.name}
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          {selectedPipe.verifiedAt && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <ScheduleIcon sx={{ fontSize: 14, color: theme.palette.text.secondary }} />
+              <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+                定音时间：{new Date(selectedPipe.verifiedAt).toLocaleString('zh-CN')}
+              </Typography>
+            </Box>
+          )}
 
           <Box sx={{ display: 'flex', gap: 1 }}>
             <Button
@@ -358,14 +561,15 @@ export const PipeDetailPanel: React.FC = () => {
         <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
           更新于 {new Date(selectedPipe.updatedAt).toLocaleString('zh-CN')}
         </Typography>
-        <IconButton
-          size="small"
-          color="error"
-          onClick={handleRemovePipe}
-          title="删除音管"
-        >
-          <DeleteIcon fontSize="small" />
-        </IconButton>
+        <Tooltip title="删除音管">
+          <IconButton
+            size="small"
+            color="error"
+            onClick={handleRemovePipe}
+          >
+            <DeleteIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
       </Box>
 
       <Dialog

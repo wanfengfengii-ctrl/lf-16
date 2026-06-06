@@ -1,12 +1,25 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
-import { Pipe, PipeStatus, TrimRecord, WorkspaceState } from '../types';
+import {
+  Pipe,
+  PipeStatus,
+  TrimRecord,
+  WorkspaceState,
+  PipeGroup,
+  OperationRecord,
+  OperationType,
+  SearchFilter,
+  ValidationResult,
+  ProjectFile,
+  GroupStats,
+} from '../types';
 import { calculateCentsDeviation } from '../utils/centsCalculator';
-import { generateMockPipes } from '../utils/mockData';
+import { generateMockPipes, generateMockGroups } from '../utils/mockData';
 
 interface PipeStore extends WorkspaceState {
   setSelectedPipe: (id: string | null) => void;
-  addPipe: (targetFrequency: number, noteName: string) => void;
+  setSelectedGroup: (groupId: string | 'all') => void;
+  addPipe: (targetFrequency: number, noteName: string, groupId?: string, slotNumber?: number) => void;
   removePipe: (id: string) => void;
   updatePipe: (id: string, updates: Partial<Pipe>) => void;
   updatePipeFrequency: (id: string, measuredFrequency: number) => void;
@@ -14,8 +27,65 @@ interface PipeStore extends WorkspaceState {
   movePipe: (fromIndex: number, toIndex: number) => void;
   addTrimRecord: (pipeId: string, record: Omit<TrimRecord, 'id' | 'timestamp'>) => void;
   setAllowedDeviation: (cents: number) => void;
-  updatePipeStatus: (id: string, status: PipeStatus) => void;
+  updatePipeStatus: (id: string, status: PipeStatus, reason?: string) => void;
   recalculateAllDeviations: () => void;
+
+  addGroup: (name: string, color: string, description?: string) => void;
+  removeGroup: (groupId: string) => void;
+  updateGroup: (groupId: string, updates: Partial<PipeGroup>) => void;
+  movePipeToGroup: (pipeId: string, groupId: string | undefined) => void;
+
+  batchAddPipes: (
+    pipes: Array<{ targetFrequency: number; noteName: string; slotNumber?: number }>,
+    groupId?: string
+  ) => void;
+  batchVerifyPipes: (pipeIds: string[]) => void;
+  batchUpdateStatus: (pipeIds: string[], status: PipeStatus) => void;
+  batchMoveToGroup: (pipeIds: string[], groupId: string | undefined) => void;
+
+  validateFrequency: (freq: number, targetFreq?: number) => ValidationResult;
+  validateTargetFrequency: (freq: number) => ValidationResult;
+
+  setSearchFilter: (filter: Partial<SearchFilter>) => void;
+  getFilteredPipes: () => Pipe[];
+  getGroupStats: () => GroupStats[];
+
+  setHighlightedPipes: (pipeIds: string[]) => void;
+  clearHighlightedPipes: () => void;
+
+  addOperationRecord: (
+    type: OperationType,
+    description: string,
+    data?: { pipeId?: string; pipeIds?: string[]; beforeData?: unknown; afterData?: unknown; metadata?: Record<string, unknown> }
+  ) => void;
+
+  setTotalSlots: (slots: number) => void;
+  getSlotOccupancy: () => Array<{ slot: number; pipeId: string | null; pipe?: Pipe }>;
+
+  exportProject: () => ProjectFile;
+  importProject: (project: ProjectFile, mode?: 'replace' | 'merge') => void;
+
+  setProjectName: (name: string) => void;
+}
+
+function recalculateStatus(
+  cents: number | undefined,
+  currentStatus: PipeStatus,
+  allowedDeviation: number
+): PipeStatus {
+  if (cents === undefined) return currentStatus === 'verified' ? 'needs-review' : currentStatus;
+
+  const absCents = Math.abs(cents);
+
+  if (currentStatus === 'tuning') {
+    return absCents <= allowedDeviation ? 'verified' : 'tuning';
+  } else if (currentStatus === 'verified') {
+    return absCents > allowedDeviation ? 'needs-review' : 'verified';
+  } else if (currentStatus === 'needs-review') {
+    return absCents <= allowedDeviation ? 'verified' : 'needs-review';
+  }
+
+  return currentStatus;
 }
 
 export const usePipeStore = create<PipeStore>((set, get) => {
@@ -37,187 +107,654 @@ export const usePipeStore = create<PipeStore>((set, get) => {
     });
   })();
 
+  const initialGroups = generateMockGroups();
+
   return {
     pipes: initialPipes,
+    groups: initialGroups,
     selectedPipeId: null,
+    selectedGroupId: 'all',
     allowedCentsDeviation: 5,
+    operationHistory: [],
+    searchFilter: {
+      query: '',
+      status: 'all',
+      groupId: 'all',
+      hasMeasured: 'all',
+      deviationRange: 'all',
+    },
+    totalSlots: 61,
+    highlightedPipeIds: [],
+    projectName: '未命名工程',
 
-  setSelectedPipe: (id) => set({ selectedPipeId: id }),
+    setSelectedPipe: (id) => set({ selectedPipeId: id }),
 
-  addPipe: (targetFrequency, noteName) =>
-    set((state) => {
-      const newPipe: Pipe = {
-        id: uuidv4(),
-        keyPosition: state.pipes.length + 1,
-        noteName,
-        targetFrequency,
-        status: 'tuning',
-        notes: '',
-        trimHistory: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      return {
-        pipes: [...state.pipes, newPipe],
-      };
-    }),
+    setSelectedGroup: (groupId) => set({ selectedGroupId: groupId }),
 
-  removePipe: (id) =>
-    set((state) => {
-      const filtered = state.pipes.filter((p) => p.id !== id);
-      const repositioned = filtered.map((p, idx) => ({ ...p, keyPosition: idx + 1 }));
-      return {
-        pipes: repositioned,
-        selectedPipeId: state.selectedPipeId === id ? null : state.selectedPipeId,
-      };
-    }),
-
-  updatePipe: (id, updates) =>
-    set((state) => ({
-      pipes: state.pipes.map((p) =>
-        p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p
-      ),
-    })),
-
-  updatePipeFrequency: (id, measuredFrequency) => {
-    if (measuredFrequency <= 0) return;
-
-    set((state) => {
-      const pipes = state.pipes.map((p) => {
-        if (p.id !== id) return p;
-        const cents = calculateCentsDeviation(p.targetFrequency, measuredFrequency);
-        const absCents = Math.abs(cents);
-        let status: PipeStatus = p.status;
-
-        if (p.status === 'tuning') {
-          status = absCents <= state.allowedCentsDeviation ? 'verified' : 'tuning';
-        } else if (p.status === 'verified') {
-          if (absCents > state.allowedCentsDeviation) {
-            status = 'needs-review';
-          }
-        } else if (p.status === 'needs-review') {
-          if (absCents <= state.allowedCentsDeviation) {
-            status = 'verified';
-          }
-        }
-
-        return {
-          ...p,
-          measuredFrequency,
-          centsDeviation: cents,
-          status,
-          initialDeviation: p.initialDeviation ?? cents,
-          updatedAt: new Date().toISOString(),
-        };
-      });
-      return { pipes };
-    });
-  },
-
-  updateTargetFrequency: (id, targetFrequency) => {
-    if (targetFrequency <= 0) return;
-
-    set((state) => {
-      const pipes = state.pipes.map((p) => {
-        if (p.id !== id) return p;
-        const cents = p.measuredFrequency
-          ? calculateCentsDeviation(targetFrequency, p.measuredFrequency)
-          : undefined;
-        let status: PipeStatus = p.status;
-        
-        if (p.status === 'verified') {
-          status = 'needs-review';
-        } else if (cents !== undefined) {
-          const absCents = Math.abs(cents);
-          if (absCents <= state.allowedCentsDeviation) {
-            status = 'verified';
-          } else {
-            status = p.status === 'needs-review' ? 'needs-review' : 'tuning';
-          }
-        }
-
-        return {
-          ...p,
+    addPipe: (targetFrequency, noteName, groupId, slotNumber) =>
+      set((state) => {
+        const newPipe: Pipe = {
+          id: uuidv4(),
+          keyPosition: state.pipes.length + 1,
+          noteName,
           targetFrequency,
-          centsDeviation: cents,
-          status,
+          status: 'tuning',
+          notes: '',
+          trimHistory: [],
+          groupId,
+          slotNumber,
+          createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
-      });
-      return { pipes };
-    });
-  },
+        return {
+          pipes: [...state.pipes, newPipe],
+        };
+      }),
 
-  movePipe: (fromIndex, toIndex) =>
-    set((state) => {
-      const pipes = [...state.pipes];
-      const [movedPipe] = pipes.splice(fromIndex, 1);
-      pipes.splice(toIndex, 0, movedPipe);
+    removePipe: (id) =>
+      set((state) => {
+        const pipeToRemove = state.pipes.find((p) => p.id === id);
+        const filtered = state.pipes.filter((p) => p.id !== id);
+        const repositioned = filtered.map((p, idx) => ({ ...p, keyPosition: idx + 1 }));
 
-      const repositioned = pipes.map((p, idx) => {
-        const newPosition = idx + 1;
-        let status = p.status;
-        if (p.status === 'verified' && p.keyPosition !== newPosition) {
-          status = 'needs-review';
-        }
-        return { ...p, keyPosition: newPosition, status };
-      });
+        const repositionedWithReview = repositioned.map((p) => {
+          if (p.status === 'verified' && pipeToRemove && p.keyPosition !== p.keyPosition) {
+            return { ...p, status: 'needs-review' as PipeStatus, needsReviewReason: '位置变更需复核' };
+          }
+          return p;
+        });
 
-      return { pipes: repositioned };
-    }),
+        const newRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'remove',
+          timestamp: new Date().toISOString(),
+          description: `删除音管: ${pipeToRemove?.noteName || '未知'}`,
+          pipeId: id,
+          beforeData: pipeToRemove,
+        };
 
-  addTrimRecord: (pipeId, record) =>
-    set((state) => {
-      const newRecord: TrimRecord = {
-        ...record,
-        id: uuidv4(),
-        timestamp: new Date().toISOString(),
-      };
-      return {
+        return {
+          pipes: repositionedWithReview,
+          selectedPipeId: state.selectedPipeId === id ? null : state.selectedPipeId,
+          operationHistory: [...state.operationHistory, newRecord],
+        };
+      }),
+
+    updatePipe: (id, updates) =>
+      set((state) => ({
         pipes: state.pipes.map((p) =>
-          p.id === pipeId
-            ? { ...p, trimHistory: [...p.trimHistory, newRecord], updatedAt: new Date().toISOString() }
+          p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p
+        ),
+      })),
+
+    updatePipeFrequency: (id, measuredFrequency) => {
+      if (measuredFrequency <= 0) return;
+
+      set((state) => {
+        const beforePipe = state.pipes.find((p) => p.id === id);
+        const pipes = state.pipes.map((p) => {
+          if (p.id !== id) return p;
+          const cents = calculateCentsDeviation(p.targetFrequency, measuredFrequency);
+          const newStatus = recalculateStatus(cents, p.status, state.allowedCentsDeviation);
+
+          return {
+            ...p,
+            measuredFrequency,
+            centsDeviation: cents,
+            status: newStatus,
+            initialDeviation: p.initialDeviation ?? cents,
+            verifiedAt: newStatus === 'verified' ? new Date().toISOString() : p.verifiedAt,
+            updatedAt: new Date().toISOString(),
+          };
+        });
+
+        const afterPipe = pipes.find((p) => p.id === id);
+        const newRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'update',
+          timestamp: new Date().toISOString(),
+          description: `更新实测频率: ${afterPipe?.noteName} - ${measuredFrequency.toFixed(2)} Hz`,
+          pipeId: id,
+          beforeData: beforePipe,
+          afterData: afterPipe,
+        };
+
+        return { pipes, operationHistory: [...state.operationHistory, newRecord] };
+      });
+    },
+
+    updateTargetFrequency: (id, targetFrequency) => {
+      if (targetFrequency <= 0) return;
+
+      set((state) => {
+        const beforePipe = state.pipes.find((p) => p.id === id);
+        const pipes = state.pipes.map((p) => {
+          if (p.id !== id) return p;
+          const cents = p.measuredFrequency
+            ? calculateCentsDeviation(targetFrequency, p.measuredFrequency)
+            : undefined;
+          const newStatus = recalculateStatus(cents, p.status, state.allowedCentsDeviation);
+          const needsReviewReason =
+            p.status === 'verified' && newStatus === 'needs-review' ? '目标频率变更需复核' : p.needsReviewReason;
+
+          return {
+            ...p,
+            targetFrequency,
+            centsDeviation: cents,
+            status: newStatus,
+            needsReviewReason,
+            updatedAt: new Date().toISOString(),
+          };
+        });
+
+        const afterPipe = pipes.find((p) => p.id === id);
+        const newRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'update',
+          timestamp: new Date().toISOString(),
+          description: `更新目标频率: ${afterPipe?.noteName} - ${targetFrequency.toFixed(2)} Hz`,
+          pipeId: id,
+          beforeData: beforePipe,
+          afterData: afterPipe,
+        };
+
+        return { pipes, operationHistory: [...state.operationHistory, newRecord] };
+      });
+    },
+
+    movePipe: (fromIndex, toIndex) =>
+      set((state) => {
+        const pipes = [...state.pipes];
+        const [movedPipe] = pipes.splice(fromIndex, 1);
+        pipes.splice(toIndex, 0, movedPipe);
+
+        const repositioned = pipes.map((p, idx) => {
+          const newPosition = idx + 1;
+          let status = p.status;
+          let needsReviewReason = p.needsReviewReason;
+          if (p.status === 'verified' && p.keyPosition !== newPosition) {
+            status = 'needs-review';
+            needsReviewReason = '位置变更需复核';
+          }
+          return { ...p, keyPosition: newPosition, status, needsReviewReason };
+        });
+
+        const newRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'move',
+          timestamp: new Date().toISOString(),
+          description: `移动音管: ${movedPipe.noteName} 从位置 ${fromIndex + 1} 到 ${toIndex + 1}`,
+          pipeId: movedPipe.id,
+          metadata: { fromIndex, toIndex },
+        };
+
+        return { pipes: repositioned, operationHistory: [...state.operationHistory, newRecord] };
+      }),
+
+    addTrimRecord: (pipeId, record) =>
+      set((state) => {
+        const newRecord: TrimRecord = {
+          ...record,
+          id: uuidv4(),
+          timestamp: new Date().toISOString(),
+        };
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'trim',
+          timestamp: new Date().toISOString(),
+          description: `记录修整: ${record.beforeFrequency.toFixed(2)} → ${record.afterFrequency.toFixed(2)} Hz`,
+          pipeId,
+          beforeData: { beforeFrequency: record.beforeFrequency },
+          afterData: { afterFrequency: record.afterFrequency },
+        };
+
+        return {
+          pipes: state.pipes.map((p) =>
+            p.id === pipeId
+              ? { ...p, trimHistory: [...p.trimHistory, newRecord], updatedAt: new Date().toISOString() }
+              : p
+          ),
+          operationHistory: [...state.operationHistory, opRecord],
+        };
+      }),
+
+    setAllowedDeviation: (cents) =>
+      set((state) => {
+        const pipes = state.pipes.map((p) => {
+          if (p.centsDeviation === undefined || p.measuredFrequency === undefined) {
+            return p;
+          }
+          const newStatus = recalculateStatus(p.centsDeviation, p.status, cents);
+          const needsReviewReason =
+            p.status === 'verified' && newStatus === 'needs-review'
+              ? '阈值调整需复核'
+              : p.needsReviewReason;
+
+          return { ...p, status: newStatus, needsReviewReason };
+        });
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'threshold-change',
+          timestamp: new Date().toISOString(),
+          description: `调整允许偏差: ${state.allowedCentsDeviation} → ${cents} 音分`,
+          metadata: { before: state.allowedCentsDeviation, after: cents },
+        };
+
+        return {
+          allowedCentsDeviation: cents,
+          pipes,
+          operationHistory: [...state.operationHistory, opRecord],
+        };
+      }),
+
+    updatePipeStatus: (id, status, reason) =>
+      set((state) => {
+        const beforePipe = state.pipes.find((p) => p.id === id);
+        const pipes = state.pipes.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                status,
+                needsReviewReason: reason,
+                verifiedAt: status === 'verified' ? new Date().toISOString() : p.verifiedAt,
+                updatedAt: new Date().toISOString(),
+              }
+            : p
+        );
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'status-change',
+          timestamp: new Date().toISOString(),
+          description: `状态变更: ${beforePipe?.noteName} ${beforePipe?.status} → ${status}`,
+          pipeId: id,
+          beforeData: { status: beforePipe?.status },
+          afterData: { status },
+        };
+
+        return { pipes, operationHistory: [...state.operationHistory, opRecord] };
+      }),
+
+    recalculateAllDeviations: () =>
+      set((state) => ({
+        pipes: state.pipes.map((p) => {
+          if (!p.measuredFrequency) return p;
+          const cents = calculateCentsDeviation(p.targetFrequency, p.measuredFrequency);
+          return { ...p, centsDeviation: cents };
+        }),
+      })),
+
+    addGroup: (name, color, description) =>
+      set((state) => {
+        const newGroup: PipeGroup = {
+          id: uuidv4(),
+          name,
+          color,
+          description,
+          createdAt: new Date().toISOString(),
+        };
+        return { groups: [...state.groups, newGroup] };
+      }),
+
+    removeGroup: (groupId) =>
+      set((state) => {
+        const group = state.groups.find((g) => g.id === groupId);
+        return {
+          groups: state.groups.filter((g) => g.id !== groupId),
+          pipes: state.pipes.map((p) =>
+            p.groupId === groupId ? { ...p, groupId: undefined } : p
+          ),
+          selectedGroupId: state.selectedGroupId === groupId ? 'all' : state.selectedGroupId,
+        };
+      }),
+
+    updateGroup: (groupId, updates) =>
+      set((state) => ({
+        groups: state.groups.map((g) => (g.id === groupId ? { ...g, ...updates } : g)),
+      })),
+
+    movePipeToGroup: (pipeId, groupId) =>
+      set((state) => {
+        const pipe = state.pipes.find((p) => p.id === pipeId);
+        const group = state.groups.find((g) => g.id === groupId);
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'group-change',
+          timestamp: new Date().toISOString(),
+          description: `移动音管到分组: ${pipe?.noteName} → ${group?.name || '未分组'}`,
+          pipeId,
+          beforeData: { groupId: pipe?.groupId },
+          afterData: { groupId },
+        };
+
+        return {
+          pipes: state.pipes.map((p) =>
+            p.id === pipeId ? { ...p, groupId, updatedAt: new Date().toISOString() } : p
+          ),
+          operationHistory: [...state.operationHistory, opRecord],
+        };
+      }),
+
+    batchAddPipes: (pipesData, groupId) =>
+      set((state) => {
+        let position = state.pipes.length;
+        const newPipes: Pipe[] = pipesData.map((data) => {
+          position++;
+          return {
+            id: uuidv4(),
+            keyPosition: position,
+            noteName: data.noteName,
+            targetFrequency: data.targetFrequency,
+            status: 'tuning' as PipeStatus,
+            notes: '',
+            trimHistory: [],
+            groupId,
+            slotNumber: data.slotNumber,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+        });
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'batch-add',
+          timestamp: new Date().toISOString(),
+          description: `批量添加 ${pipesData.length} 根音管`,
+          pipeIds: newPipes.map((p) => p.id),
+          metadata: { count: pipesData.length, groupId },
+        };
+
+        return {
+          pipes: [...state.pipes, ...newPipes],
+          operationHistory: [...state.operationHistory, opRecord],
+        };
+      }),
+
+    batchVerifyPipes: (pipeIds) =>
+      set((state) => {
+        const pipes = state.pipes.map((p) => {
+          if (!pipeIds.includes(p.id)) return p;
+          if (p.centsDeviation === undefined) return p;
+          const absCents = Math.abs(p.centsDeviation);
+          if (absCents <= state.allowedCentsDeviation) {
+            return {
+              ...p,
+              status: 'verified' as PipeStatus,
+              verifiedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          return p;
+        });
+
+        const verifiedCount = pipes.filter(
+          (p) => pipeIds.includes(p.id) && p.status === 'verified'
+        ).length;
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'batch-verify',
+          timestamp: new Date().toISOString(),
+          description: `批量复核 ${verifiedCount} 根音管`,
+          pipeIds,
+          metadata: { count: verifiedCount },
+        };
+
+        return { pipes, operationHistory: [...state.operationHistory, opRecord] };
+      }),
+
+    batchUpdateStatus: (pipeIds, status) =>
+      set((state) => ({
+        pipes: state.pipes.map((p) =>
+          pipeIds.includes(p.id)
+            ? {
+                ...p,
+                status,
+                verifiedAt: status === 'verified' ? new Date().toISOString() : p.verifiedAt,
+                updatedAt: new Date().toISOString(),
+              }
             : p
         ),
-      };
-    }),
+      })),
 
-  setAllowedDeviation: (cents) =>
-    set((state) => {
-      const pipes = state.pipes.map((p) => {
-        if (p.centsDeviation === undefined || p.measuredFrequency === undefined) {
-          return p;
+    batchMoveToGroup: (pipeIds, groupId) =>
+      set((state) => ({
+        pipes: state.pipes.map((p) =>
+          pipeIds.includes(p.id) ? { ...p, groupId, updatedAt: new Date().toISOString() } : p
+        ),
+      })),
+
+    validateFrequency: (freq, targetFreq) => {
+      const errors: string[] = [];
+      const warnings: string[] = [];
+
+      if (isNaN(freq)) {
+        errors.push('频率值无效');
+      } else if (freq <= 0) {
+        errors.push('频率必须大于 0 Hz');
+      } else if (freq < 20) {
+        warnings.push('频率低于人耳可听范围');
+      } else if (freq > 20000) {
+        warnings.push('频率高于人耳可听范围');
+      }
+
+      if (targetFreq && !isNaN(freq)) {
+        const cents = calculateCentsDeviation(targetFreq, freq);
+        if (Math.abs(cents) > 100) {
+          warnings.push('偏差超过 100 音分，请确认输入是否正确');
         }
-        const absCents = Math.abs(p.centsDeviation);
-        let status = p.status;
+      }
 
-        if (p.status === 'tuning') {
-          status = absCents <= cents ? 'verified' : 'tuning';
-        } else if (p.status === 'verified') {
-          status = absCents > cents ? 'needs-review' : 'verified';
-        } else if (p.status === 'needs-review') {
-          status = absCents <= cents ? 'verified' : 'needs-review';
+      return { valid: errors.length === 0, errors, warnings };
+    },
+
+    validateTargetFrequency: (freq) => {
+      const errors: string[] = [];
+      const warnings: string[] = [];
+
+      if (isNaN(freq)) {
+        errors.push('目标频率值无效');
+      } else if (freq <= 0) {
+        errors.push('目标频率必须大于 0 Hz');
+      } else if (freq < 16) {
+        warnings.push('目标频率极低，请确认');
+      } else if (freq > 16000) {
+        warnings.push('目标频率极高，请确认');
+      }
+
+      return { valid: errors.length === 0, errors, warnings };
+    },
+
+    setSearchFilter: (filter) =>
+      set((state) => ({
+        searchFilter: { ...state.searchFilter, ...filter },
+      })),
+
+    getFilteredPipes: () => {
+      const { pipes, searchFilter, allowedCentsDeviation } = get();
+      return pipes.filter((p) => {
+        if (searchFilter.query) {
+          const query = searchFilter.query.toLowerCase();
+          const matchesNote = p.noteName.toLowerCase().includes(query);
+          const matchesFreq = p.targetFrequency.toString().includes(query);
+          const matchesNotes = p.notes.toLowerCase().includes(query);
+          const matchesPosition = p.keyPosition.toString().includes(query);
+          if (!matchesNote && !matchesFreq && !matchesNotes && !matchesPosition) {
+            return false;
+          }
         }
 
-        return { ...p, status };
+        if (searchFilter.status !== 'all' && p.status !== searchFilter.status) {
+          return false;
+        }
+
+        if (searchFilter.groupId !== 'all' && p.groupId !== searchFilter.groupId) {
+          return false;
+        }
+
+        if (searchFilter.hasMeasured === 'yes' && p.measuredFrequency === undefined) {
+          return false;
+        }
+        if (searchFilter.hasMeasured === 'no' && p.measuredFrequency !== undefined) {
+          return false;
+        }
+
+        if (searchFilter.deviationRange !== 'all' && p.centsDeviation !== undefined) {
+          const absCents = Math.abs(p.centsDeviation);
+          if (searchFilter.deviationRange === 'in-tune' && absCents > allowedCentsDeviation) {
+            return false;
+          }
+          if (searchFilter.deviationRange === 'out-of-tune' && absCents <= allowedCentsDeviation) {
+            return false;
+          }
+        }
+
+        return true;
       });
-      return { allowedCentsDeviation: cents, pipes };
-    }),
+    },
 
-  updatePipeStatus: (id, status) =>
-    set((state) => ({
-      pipes: state.pipes.map((p) =>
-        p.id === id ? { ...p, status, updatedAt: new Date().toISOString() } : p
-      ),
-    })),
+    getGroupStats: () => {
+      const { pipes, groups, allowedCentsDeviation } = get();
+      const stats: GroupStats[] = [];
 
-  recalculateAllDeviations: () =>
-    set((state) => ({
-      pipes: state.pipes.map((p) => {
-        if (!p.measuredFrequency) return p;
-        const cents = calculateCentsDeviation(p.targetFrequency, p.measuredFrequency);
-        return { ...p, centsDeviation: cents };
+      const allGroupPipes = pipes.filter((p) => !p.groupId);
+      const allDeviations = allGroupPipes
+        .filter((p) => p.centsDeviation !== undefined)
+        .map((p) => Math.abs(p.centsDeviation!));
+
+      stats.push({
+        groupId: 'all',
+        groupName: '未分组',
+        total: allGroupPipes.length,
+        verified: allGroupPipes.filter((p) => p.status === 'verified').length,
+        tuning: allGroupPipes.filter((p) => p.status === 'tuning').length,
+        needsReview: allGroupPipes.filter((p) => p.status === 'needs-review').length,
+        avgDeviation: allDeviations.length > 0 ? allDeviations.reduce((a, b) => a + b, 0) / allDeviations.length : 0,
+        maxDeviation: allDeviations.length > 0 ? Math.max(...allDeviations) : 0,
+      });
+
+      for (const group of groups) {
+        const groupPipes = pipes.filter((p) => p.groupId === group.id);
+        const deviations = groupPipes
+          .filter((p) => p.centsDeviation !== undefined)
+          .map((p) => Math.abs(p.centsDeviation!));
+
+        stats.push({
+          groupId: group.id,
+          groupName: group.name,
+          total: groupPipes.length,
+          verified: groupPipes.filter((p) => p.status === 'verified').length,
+          tuning: groupPipes.filter((p) => p.status === 'tuning').length,
+          needsReview: groupPipes.filter((p) => p.status === 'needs-review').length,
+          avgDeviation: deviations.length > 0 ? deviations.reduce((a, b) => a + b, 0) / deviations.length : 0,
+          maxDeviation: deviations.length > 0 ? Math.max(...deviations) : 0,
+        });
+      }
+
+      return stats;
+    },
+
+    setHighlightedPipes: (pipeIds) => set({ highlightedPipeIds: pipeIds }),
+
+    clearHighlightedPipes: () => set({ highlightedPipeIds: [] }),
+
+    addOperationRecord: (type, description, data) =>
+      set((state) => {
+        const record: OperationRecord = {
+          id: uuidv4(),
+          type,
+          timestamp: new Date().toISOString(),
+          description,
+          ...data,
+        };
+        return { operationHistory: [...state.operationHistory, record] };
       }),
-    })),
+
+    setTotalSlots: (slots) => set({ totalSlots: slots }),
+
+    getSlotOccupancy: () => {
+      const { pipes, totalSlots } = get();
+      const occupancy: Array<{ slot: number; pipeId: string | null; pipe?: Pipe }> = [];
+
+      for (let i = 1; i <= totalSlots; i++) {
+        const pipe = pipes.find((p) => p.slotNumber === i);
+        occupancy.push({
+          slot: i,
+          pipeId: pipe?.id || null,
+          pipe,
+        });
+      }
+
+      return occupancy;
+    },
+
+    exportProject: (): ProjectFile => {
+      const { pipes, groups, operationHistory, allowedCentsDeviation, totalSlots, projectName } = get();
+      return {
+        version: '1.0.0',
+        name: projectName,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        allowedCentsDeviation,
+        groups,
+        pipes,
+        operationHistory,
+        metadata: {
+          totalSlots,
+        },
+      };
+    },
+
+    importProject: (project, mode = 'replace') =>
+      set((state) => {
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'import',
+          timestamp: new Date().toISOString(),
+          description: `导入工程: ${project.name} (模式: ${mode})`,
+          metadata: { projectName: project.name, mode, pipeCount: project.pipes.length },
+        };
+
+        if (mode === 'replace') {
+          return {
+            pipes: project.pipes,
+            groups: project.groups,
+            allowedCentsDeviation: project.allowedCentsDeviation,
+            operationHistory: [...state.operationHistory, opRecord, ...project.operationHistory],
+            totalSlots: project.metadata?.totalSlots || state.totalSlots,
+            projectName: project.name,
+            selectedPipeId: null,
+            searchFilter: {
+              query: '',
+              status: 'all',
+              groupId: 'all',
+              hasMeasured: 'all',
+              deviationRange: 'all',
+            },
+          };
+        } else {
+          const existingIds = new Set(state.pipes.map((p) => p.id));
+          const newPipes = project.pipes.filter((p) => !existingIds.has(p.id));
+          const existingGroupIds = new Set(state.groups.map((g) => g.id));
+          const newGroups = project.groups.filter((g) => !existingGroupIds.has(g.id));
+
+          let maxPosition = state.pipes.length;
+          const mergedPipes = [
+            ...state.pipes,
+            ...newPipes.map((p) => ({ ...p, keyPosition: ++maxPosition })),
+          ];
+
+          return {
+            pipes: mergedPipes,
+            groups: [...state.groups, ...newGroups],
+            operationHistory: [...state.operationHistory, opRecord],
+          };
+        }
+      }),
+
+    setProjectName: (name) => set({ projectName: name }),
   };
 });

@@ -14,12 +14,15 @@ import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 
 interface PipeCardProps {
   pipe: Pipe;
+  isHighlighted?: boolean;
 }
 
-export const PipeCard: React.FC<PipeCardProps> = ({ pipe }) => {
+export const PipeCard: React.FC<PipeCardProps> = ({ pipe, isHighlighted = false }) => {
   const theme = useTheme();
-  const { selectedPipeId, setSelectedPipe, allowedCentsDeviation } = usePipeStore();
+  const { selectedPipeId, setSelectedPipe, allowedCentsDeviation, groups } = usePipeStore();
   const isSelected = selectedPipeId === pipe.id;
+
+  const group = groups.find((g) => g.id === pipe.groupId);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: pipe.id,
@@ -46,12 +49,22 @@ export const PipeCard: React.FC<PipeCardProps> = ({ pipe }) => {
       onClick={handleClick}
       sx={{
         position: 'relative',
-        border: `2px solid ${isSelected ? theme.palette.primary.main : color.main}`,
+        border: `2px solid ${
+          isHighlighted
+            ? theme.palette.secondary.main
+            : isSelected
+            ? theme.palette.primary.main
+            : color.main
+        }`,
         backgroundColor: isSelected
           ? `${theme.palette.primary.main}15`
+          : isHighlighted
+          ? `${theme.palette.secondary.main}15`
           : color.bg,
         boxShadow: isSelected
           ? `0 0 20px ${theme.palette.primary.main}40`
+          : isHighlighted
+          ? `0 0 15px ${theme.palette.secondary.main}40`
           : 'none',
         transition: 'all 0.2s ease',
         minHeight: 120,
@@ -66,6 +79,20 @@ export const PipeCard: React.FC<PipeCardProps> = ({ pipe }) => {
         }),
       }}
     >
+      {group && (
+        <Box
+          sx={{
+            position: 'absolute',
+            top: -2,
+            left: 8,
+            width: 20,
+            height: 6,
+            backgroundColor: group.color,
+            borderRadius: '0 0 4px 4px',
+          }}
+        />
+      )}
+
       <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
         <Box
           sx={{
@@ -180,6 +207,22 @@ export const PipeCard: React.FC<PipeCardProps> = ({ pipe }) => {
             </Typography>
           )}
         </Box>
+
+        {pipe.slotNumber && (
+          <Typography
+            variant="caption"
+            sx={{
+              display: 'block',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '0.6rem',
+              color: theme.palette.text.disabled,
+              textAlign: 'right',
+              mt: 0.5,
+            }}
+          >
+            槽位 {pipe.slotNumber}
+          </Typography>
+        )}
 
         <Chip
           label={getStatusText(pipe.status)}

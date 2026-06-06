@@ -10,7 +10,7 @@ type SortMode = 'position' | 'deviation' | 'note';
 export const DeviationChart: React.FC = () => {
   const theme = useTheme();
   const svgRef = useRef<SVGSVGElement>(null);
-  const { pipes, allowedCentsDeviation, selectedPipeId, setSelectedPipe } = usePipeStore();
+  const { pipes, allowedCentsDeviation, selectedPipeId, setSelectedPipe, highlightedPipeIds, setHighlightedPipes } = usePipeStore();
   const [sortMode, setSortMode] = React.useState<SortMode>('position');
 
   const sortedPipes = useMemo(() => {
@@ -182,10 +182,28 @@ export const DeviationChart: React.FC = () => {
       })
       .on('mouseover', function(event, d) {
         d3.select(this).attr('opacity', 0.8);
+        setHighlightedPipes([d.id]);
       })
       .on('mouseout', function(event, d) {
         d3.select(this).attr('opacity', 1);
+        setHighlightedPipes([]);
       });
+
+    g.selectAll('.highlight-indicator')
+      .data(highlightedPipeIds.filter((id) => sortedPipes.some((p) => p.id === id)))
+      .enter()
+      .append('rect')
+      .attr('class', 'highlight-indicator')
+      .attr('x', (d) => (xScale(d) ?? 0) - 2)
+      .attr('y', -5)
+      .attr('width', xScale.bandwidth() + 4)
+      .attr('height', innerHeight + 10)
+      .attr('fill', 'none')
+      .attr('stroke', theme.palette.secondary.main)
+      .attr('stroke-width', 2)
+      .attr('stroke-dasharray', '4,4')
+      .attr('rx', 4)
+      .attr('pointer-events', 'none');
 
     g.selectAll('.selected-indicator')
       .data(selectedPipeId ? [selectedPipeId] : [])
@@ -241,7 +259,7 @@ export const DeviationChart: React.FC = () => {
       .attr('font-size', '10px')
       .text('当前');
 
-  }, [sortedPipes, allowedCentsDeviation, selectedPipeId, theme, setSelectedPipe, sortMode]);
+  }, [sortedPipes, allowedCentsDeviation, selectedPipeId, highlightedPipeIds, theme, setSelectedPipe, setHighlightedPipes, sortMode]);
 
   const stats = useMemo(() => {
     const withDeviation = pipes.filter((p) => p.centsDeviation !== undefined);
