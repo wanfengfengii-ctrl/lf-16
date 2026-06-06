@@ -28,6 +28,15 @@ export function getStatusColor(
     };
   }
 
+  if (status === 'pending-retest') {
+    return {
+      main: '#8b5cf6',
+      light: '#a78bfa',
+      dark: '#7c3aed',
+      bg: 'rgba(139, 92, 246, 0.15)',
+    };
+  }
+
   if (absDeviation > allowedDeviation) {
     return {
       main: '#ef4444',
@@ -53,6 +62,8 @@ export function getStatusText(status: string): string {
       return '已定音';
     case 'needs-review':
       return '待复核';
+    case 'pending-retest':
+      return '待复测';
     default:
       return status;
   }

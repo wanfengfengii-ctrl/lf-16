@@ -17,7 +17,7 @@ interface SlotOccupancyViewProps {
 
 export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = false }) => {
   const theme = useTheme();
-  const { pipes, totalSlots, selectedPipeId, setSelectedPipe, highlightedPipeIds, allowedCentsDeviation } = usePipeStore();
+  const { pipes, totalSlots, selectedPipeId, setSelectedPipe, highlightedPipeIds, setHighlightedPipes, allowedCentsDeviation } = usePipeStore();
 
   const slotOccupancy = useMemo(() => {
     const occupancy: Array<{ slot: number; pipes: Pipe[]; hasConflict: boolean }> = [];
@@ -100,6 +100,8 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
               >
                 <Box
                   onClick={() => handleSlotClick(slotPipes)}
+                  onMouseEnter={() => setHighlightedPipes(slotPipes.map((p) => p.id))}
+                  onMouseLeave={() => setHighlightedPipes([])}
                   sx={{
                     aspectRatio: '1',
                     borderRadius: 1,
@@ -250,6 +252,8 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
             >
               <Box
                 onClick={() => handleSlotClick(slotPipes)}
+                onMouseEnter={() => setHighlightedPipes(slotPipes.map((p) => p.id))}
+                onMouseLeave={() => setHighlightedPipes([])}
                 sx={{
                   aspectRatio: '1',
                   borderRadius: 1,

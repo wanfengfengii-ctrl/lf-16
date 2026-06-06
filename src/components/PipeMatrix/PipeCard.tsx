@@ -19,7 +19,7 @@ interface PipeCardProps {
 
 export const PipeCard: React.FC<PipeCardProps> = ({ pipe, isHighlighted = false }) => {
   const theme = useTheme();
-  const { selectedPipeId, setSelectedPipe, allowedCentsDeviation, groups } = usePipeStore();
+  const { selectedPipeId, setSelectedPipe, setHighlightedPipes, allowedCentsDeviation, groups } = usePipeStore();
   const isSelected = selectedPipeId === pipe.id;
 
   const group = groups.find((g) => g.id === pipe.groupId);
@@ -42,11 +42,21 @@ export const PipeCard: React.FC<PipeCardProps> = ({ pipe, isHighlighted = false 
     setSelectedPipe(pipe.id);
   };
 
+  const handleMouseEnter = () => {
+    setHighlightedPipes([pipe.id]);
+  };
+
+  const handleMouseLeave = () => {
+    setHighlightedPipes([]);
+  };
+
   return (
     <Card
       ref={setNodeRef}
       style={style}
       onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       sx={{
         position: 'relative',
         border: `2px solid ${

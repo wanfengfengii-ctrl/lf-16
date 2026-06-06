@@ -12,6 +12,11 @@ import {
   Tab,
   FormControlLabel,
   Switch,
+  Divider,
+  List,
+  ListItem,
+  ListItemText,
+  Avatar,
 } from '@mui/material';
 import MicIcon from '@mui/icons-material/Mic';
 import MicOffIcon from '@mui/icons-material/MicOff';
@@ -20,6 +25,10 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import GraphicEqIcon from '@mui/icons-material/GraphicEq';
 import TuneIcon from '@mui/icons-material/Tune';
 import HistoryIcon from '@mui/icons-material/History';
+import ReplayIcon from '@mui/icons-material/Replay';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { usePipeStore } from '../../hooks/usePipeStore';
 import { usePitchDetection } from '../../hooks/usePitchDetection';
 import { WaveformCanvas } from './WaveformCanvas';
@@ -38,6 +47,14 @@ export const PitchDetectionCenter: React.FC = () => {
     allowedCentsDeviation,
     writeMeasuredFrequencyFromSession,
     addPitchDetectionSession,
+    getRetestRecordsForPipe,
+    startRetest,
+    completeRetest,
+    autoRetestEnabled,
+    retestThreshold,
+    setAutoRetestEnabled,
+    setRetestThreshold,
+    refreshWarnings,
   } = usePipeStore();
 
   const selectedPipe = useMemo(
@@ -116,6 +133,11 @@ export const PitchDetectionCenter: React.FC = () => {
     ? validSamples.reduce((sum, s) => sum + s.stability, 0) / validSamples.length
     : 0;
 
+  const retestRecords = useMemo(() => {
+    if (!selectedPipeId) return [];
+    return getRetestRecordsForPipe(selectedPipeId);
+  }, [selectedPipeId, getRetestRecordsForPipe]);
+
   const handleWriteFrequency = () => {
     if (!selectedPipe || (!currentResult && avgFrequency <= 0)) return;
 
@@ -132,6 +154,24 @@ export const PitchDetectionCenter: React.FC = () => {
     });
 
     writeMeasuredFrequencyFromSession(selectedPipe.id, freq, sessionId);
+
+    if (autoRetestEnabled && selectedPipe.status === 'pending-retest') {
+      const cents = calculateCentsDeviation(selectedPipe.targetFrequency, freq);
+      const passed = Math.abs(cents) <= allowedCentsDeviation;
+      completeRetest(selectedPipe.id, passed, freq);
+      refreshWarnings();
+    }
+  };
+
+  const handleStartRetest = () => {
+    if (!selectedPipe) return;
+    startRetest(selectedPipe.id);
+  };
+
+  const handleCompleteRetest = (passed: boolean) => {
+    if (!selectedPipe || displayFrequency <= 0) return;
+    completeRetest(selectedPipe.id, passed, displayFrequency);
+    refreshWarnings();
   };
 
   const handleViewModeChange = (_event: React.SyntheticEvent, newValue: 'waveform' | 'spectrum' | 'history') => {
@@ -359,6 +399,174 @@ export const PitchDetectionCenter: React.FC = () => {
           samples={validSamples}
           targetFrequency={selectedPipe?.targetFrequency}
         />
+
+        {selectedPipe && selectedPipe.status === 'pending-retest' && (
+          <Box
+            sx={{
+              p: 2,
+              backgroundColor: `${theme.palette.warning.main}10`,
+              border: `1px solid ${theme.palette.warning.main}30`,
+              borderRadius: 2,
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+              <ReplayIcon sx={{ color: theme.palette.warning.main, fontSize: 18 }} />
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: theme.palette.warning.main }}>
+                复测模式
+              </Typography>
+              <Chip
+                label={`第 ${selectedPipe.retestCount + 1} 次`}
+                size="small"
+                color="warning"
+                variant="outlined"
+                sx={{ ml: 'auto' }}
+              />
+            </Box>
+            <Typography variant="caption" sx={{ color: theme.palette.text.secondary, display: 'block', mb: 2 }}>
+              录音测频后点击下方按钮完成复测，结果将自动回写
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                fullWidth
+                size="small"
+                variant="contained"
+                color="success"
+                startIcon={<CheckCircleIcon />}
+                onClick={() => handleCompleteRetest(true)}
+                disabled={displayFrequency <= 0 || displayConfidence < 0.3 || isRecording}
+              >
+                复测通过
+              </Button>
+              <Button
+                fullWidth
+                size="small"
+                variant="outlined"
+                color="error"
+                startIcon={<CancelIcon />}
+                onClick={() => handleCompleteRetest(false)}
+                disabled={displayFrequency <= 0 || displayConfidence < 0.3 || isRecording}
+              >
+                复测未通过
+              </Button>
+            </Box>
+          </Box>
+        )}
+
+        {selectedPipe && selectedPipe.status !== 'pending-retest' && (
+          <Box>
+            <Button
+              fullWidth
+              size="small"
+              variant="outlined"
+              startIcon={<ReplayIcon />}
+              onClick={handleStartRetest}
+              disabled={!selectedPipe}
+            >
+              发起复测
+            </Button>
+          </Box>
+        )}
+
+        {retestRecords.length > 0 && (
+          <Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+              <HistoryIcon sx={{ fontSize: 18, color: theme.palette.text.secondary }} />
+              <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                复测记录 ({retestRecords.length})
+              </Typography>
+            </Box>
+            <List
+              sx={{
+                maxHeight: 150,
+                overflow: 'auto',
+                backgroundColor: theme.palette.background.default,
+                borderRadius: 1,
+                py: 0,
+              }}
+            >
+              {retestRecords.map((record, index) => (
+                <React.Fragment key={record.id}>
+                  {index > 0 && <Divider variant="inset" component="li" />}
+                  <ListItem sx={{ py: 1, px: 2 }}>
+                    <Avatar
+                      sx={{
+                        width: 28,
+                        height: 28,
+                        bgcolor: record.passed
+                          ? `${theme.palette.success.main}15`
+                          : `${theme.palette.error.main}15`,
+                        mr: 1.5,
+                      }}
+                    >
+                      {record.passed ? (
+                        <CheckCircleIcon sx={{ fontSize: 16, color: theme.palette.success.main }} />
+                      ) : (
+                        <CancelIcon sx={{ fontSize: 16, color: theme.palette.error.main }} />
+                      )}
+                    </Avatar>
+                    <ListItemText
+                      primary={
+                        <Typography variant="body2" sx={{ fontSize: '0.8rem', fontWeight: 500 }}>
+                          {record.passed ? '复测通过' : '复测未通过'}
+                        </Typography>
+                      }
+                      secondary={
+                        <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
+                          {formatFrequency(record.retestFrequency)} · {formatCents(record.retestCentsDeviation)} ·{' '}
+                          {new Date(record.timestamp).toLocaleString('zh-CN')}
+                        </Typography>
+                      }
+                      sx={{ my: 0 }}
+                    />
+                  </ListItem>
+                </React.Fragment>
+              ))}
+            </List>
+          </Box>
+        )}
+
+        <Divider />
+
+        <Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+            <SettingsIcon sx={{ fontSize: 18, color: theme.palette.text.secondary }} />
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+              复测设置
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, pl: 1 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={autoRetestEnabled}
+                  onChange={(e) => setAutoRetestEnabled(e.target.checked)}
+                />
+              }
+              label={
+                <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
+                  写入频率时自动完成复测
+                </Typography>
+              }
+            />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+                复测阈值:
+              </Typography>
+              <Chip
+                label={`${retestThreshold} 次`}
+                size="small"
+                variant="outlined"
+                onClick={() => setRetestThreshold(retestThreshold + 1)}
+                onDelete={() => setRetestThreshold(Math.max(1, retestThreshold - 1))}
+                sx={{ cursor: 'pointer' }}
+              />
+              <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+                超次触发预警
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
       </Box>
     </Box>
   );

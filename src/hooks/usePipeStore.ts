@@ -13,9 +13,30 @@ import {
   ProjectFile,
   GroupStats,
   PitchDetectionSession,
+  Workstation,
+  Craftsman,
+  WarningRecord,
+  WarningType,
+  BatchTuningTask,
+  TaskStatus,
+  TaskPriority,
+  RetestRecord,
+  SlotConflict,
+  OperationLog,
+  WorkstationStats,
+  CraftsmanStats,
 } from '../types';
 import { calculateCentsDeviation } from '../utils/centsCalculator';
-import { generateMockPipes, generateMockGroups } from '../utils/mockData';
+import {
+  generateMockPipes,
+  generateMockGroups,
+  generateMockWorkstations,
+  generateMockCraftsmen,
+  generateMockWarnings,
+  generateMockBatchTasks,
+  generateMockRetestRecords,
+  generateMockSlotConflicts,
+} from '../utils/mockData';
 
 interface PipeStore extends WorkspaceState {
   setSelectedPipe: (id: string | null) => void;
@@ -84,6 +105,66 @@ interface PipeStore extends WorkspaceState {
 
   togglePitchDetectionPanel: () => void;
   setShowPitchDetectionPanel: (show: boolean) => void;
+
+  addWorkstation: (name: string, color: string, description?: string) => void;
+  removeWorkstation: (id: string) => void;
+  updateWorkstation: (id: string, updates: Partial<Workstation>) => void;
+  setSelectedWorkstation: (id: string | 'all') => void;
+
+  addCraftsman: (name: string, role?: string) => void;
+  removeCraftsman: (id: string) => void;
+  updateCraftsman: (id: string, updates: Partial<Craftsman>) => void;
+  setSelectedCraftsman: (id: string | 'all') => void;
+  setCurrentCraftsman: (id: string | null) => void;
+
+  assignPipeToWorkstation: (pipeId: string, workstationId: string | undefined) => void;
+  assignPipeToCraftsman: (pipeId: string, craftsmanId: string | undefined) => void;
+  batchAssignToWorkstation: (pipeIds: string[], workstationId: string | undefined) => void;
+  batchAssignToCraftsman: (pipeIds: string[], craftsmanId: string | undefined) => void;
+
+  getWorkstationStats: () => WorkstationStats[];
+  getCraftsmanStats: () => CraftsmanStats[];
+
+  addWarning: (type: WarningType, pipeId: string, severity: 'low' | 'medium' | 'high', message: string) => void;
+  resolveWarning: (warningId: string, resolvedBy?: string) => void;
+  resolveWarningsForPipe: (pipeId: string, resolvedBy?: string) => void;
+  refreshWarnings: () => void;
+  getUnresolvedWarnings: () => WarningRecord[];
+
+  createBatchTask: (name: string, pipeIds: string[], priority?: TaskPriority, description?: string) => string;
+  updateBatchTask: (taskId: string, updates: Partial<BatchTuningTask>) => void;
+  removeBatchTask: (taskId: string) => void;
+  startBatchTask: (taskId: string) => void;
+  completeBatchTask: (taskId: string) => void;
+  assignTaskToWorkstation: (taskId: string, workstationId: string | undefined) => void;
+  assignTaskToCraftsman: (taskId: string, craftsmanId: string | undefined) => void;
+  updateTaskProgress: (taskId: string, progress: number) => void;
+  getTasksByWorkstation: (workstationId: string) => BatchTuningTask[];
+  getTasksByCraftsman: (craftsmanId: string) => BatchTuningTask[];
+
+  addRetestRecord: (record: Omit<RetestRecord, 'id' | 'timestamp'>) => void;
+  getRetestRecordsForPipe: (pipeId: string) => RetestRecord[];
+  startRetest: (pipeId: string) => void;
+  completeRetest: (pipeId: string, passed: boolean, retestFrequency: number, notes?: string) => void;
+
+  detectSlotConflicts: () => SlotConflict[];
+  resolveSlotConflict: (conflictId: string, keepPipeId: string) => void;
+  getSlotConflicts: () => SlotConflict[];
+
+  addOperationLog: (action: string, data?: { pipeId?: string; pipeIds?: string[]; details?: Record<string, unknown> }) => void;
+  getOperationLogsForPipe: (pipeId: string) => OperationLog[];
+
+  toggleWarningPanel: () => void;
+  toggleTaskPanel: () => void;
+  toggleWorkstationPanel: () => void;
+  toggleConflictDesk: () => void;
+  setShowWarningPanel: (show: boolean) => void;
+  setShowTaskPanel: (show: boolean) => void;
+  setShowWorkstationPanel: (show: boolean) => void;
+  setShowConflictDesk: (show: boolean) => void;
+
+  setAutoRetestEnabled: (enabled: boolean) => void;
+  setRetestThreshold: (threshold: number) => void;
 }
 
 function recalculateStatus(
@@ -127,8 +208,42 @@ export const usePipeStore = create<PipeStore>((set, get) => {
 
   const initialGroups = generateMockGroups();
 
+  const initialWorkstations = generateMockWorkstations();
+  const initialCraftsmen = generateMockCraftsmen();
+  const initialWarnings = generateMockWarnings(initialPipes);
+  const initialBatchTasks = generateMockBatchTasks(initialPipes);
+  const initialRetestRecords = generateMockRetestRecords(initialPipes);
+  const initialSlotConflicts = generateMockSlotConflicts();
+
+  const pipesWithAssignments = initialPipes.map((pipe, index) => {
+    let workstationId: string | undefined;
+    let craftsmanId: string | undefined;
+    let taskId: string | undefined;
+
+    if (index < 8) {
+      workstationId = 'ws-1';
+      craftsmanId = 'craftsman-1';
+      taskId = 'task-1';
+    } else if (index < 20) {
+      workstationId = 'ws-2';
+      craftsmanId = 'craftsman-2';
+      taskId = 'task-2';
+    } else if (index < 32) {
+      workstationId = 'ws-3';
+      craftsmanId = 'craftsman-3';
+      taskId = 'task-3';
+    }
+
+    return {
+      ...pipe,
+      workstationId,
+      assignedCraftsmanId: craftsmanId,
+      taskId,
+    };
+  });
+
   return {
-    pipes: initialPipes,
+    pipes: pipesWithAssignments,
     groups: initialGroups,
     selectedPipeId: null,
     selectedGroupId: 'all',
@@ -146,6 +261,22 @@ export const usePipeStore = create<PipeStore>((set, get) => {
     projectName: '未命名工程',
     pitchDetectionSessions: [],
     showPitchDetectionPanel: false,
+    workstations: initialWorkstations,
+    craftsmen: initialCraftsmen,
+    warnings: initialWarnings,
+    batchTasks: initialBatchTasks,
+    retestRecords: initialRetestRecords,
+    slotConflicts: initialSlotConflicts,
+    operationLogs: [],
+    selectedWorkstationId: 'all',
+    selectedCraftsmanId: 'all',
+    showWarningPanel: false,
+    showTaskPanel: false,
+    showWorkstationPanel: false,
+    showConflictDesk: false,
+    currentCraftsmanId: null,
+    autoRetestEnabled: true,
+    retestThreshold: 2,
 
     setSelectedPipe: (id) => set({ selectedPipeId: id }),
 
@@ -176,6 +307,8 @@ export const usePipeStore = create<PipeStore>((set, get) => {
           trimHistory: [],
           groupId,
           slotNumber,
+          retestCount: 0,
+          warningCount: 0,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -597,6 +730,8 @@ export const usePipeStore = create<PipeStore>((set, get) => {
             trimHistory: [],
             groupId,
             slotNumber: data.slotNumber,
+            retestCount: 0,
+            warningCount: 0,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
@@ -967,5 +1102,628 @@ export const usePipeStore = create<PipeStore>((set, get) => {
       set((state) => ({ showPitchDetectionPanel: !state.showPitchDetectionPanel })),
 
     setShowPitchDetectionPanel: (show) => set({ showPitchDetectionPanel: show }),
+
+    addWorkstation: (name, color, description) =>
+      set((state) => {
+        const newWorkstation: Workstation = {
+          id: uuidv4(),
+          name,
+          color,
+          description,
+          createdAt: new Date().toISOString(),
+        };
+        return { workstations: [...state.workstations, newWorkstation] };
+      }),
+
+    removeWorkstation: (id) =>
+      set((state) => ({
+        workstations: state.workstations.filter((w) => w.id !== id),
+        pipes: state.pipes.map((p) =>
+          p.workstationId === id ? { ...p, workstationId: undefined } : p
+        ),
+        selectedWorkstationId: state.selectedWorkstationId === id ? 'all' : state.selectedWorkstationId,
+      })),
+
+    updateWorkstation: (id, updates) =>
+      set((state) => ({
+        workstations: state.workstations.map((w) =>
+          w.id === id ? { ...w, ...updates } : w
+        ),
+      })),
+
+    setSelectedWorkstation: (id) => set({ selectedWorkstationId: id }),
+
+    addCraftsman: (name, role) =>
+      set((state) => {
+        const newCraftsman: Craftsman = {
+          id: uuidv4(),
+          name,
+          role,
+          createdAt: new Date().toISOString(),
+        };
+        return { craftsmen: [...state.craftsmen, newCraftsman] };
+      }),
+
+    removeCraftsman: (id) =>
+      set((state) => ({
+        craftsmen: state.craftsmen.filter((c) => c.id !== id),
+        pipes: state.pipes.map((p) =>
+          p.assignedCraftsmanId === id ? { ...p, assignedCraftsmanId: undefined } : p
+        ),
+        selectedCraftsmanId: state.selectedCraftsmanId === id ? 'all' : state.selectedCraftsmanId,
+      })),
+
+    updateCraftsman: (id, updates) =>
+      set((state) => ({
+        craftsmen: state.craftsmen.map((c) =>
+          c.id === id ? { ...c, ...updates } : c
+        ),
+      })),
+
+    setSelectedCraftsman: (id) => set({ selectedCraftsmanId: id }),
+
+    setCurrentCraftsman: (id) => set({ currentCraftsmanId: id }),
+
+    assignPipeToWorkstation: (pipeId, workstationId) =>
+      set((state) => {
+        const pipe = state.pipes.find((p) => p.id === pipeId);
+        const workstation = state.workstations.find((w) => w.id === workstationId);
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'update',
+          timestamp: new Date().toISOString(),
+          description: `分配音管到工位: ${pipe?.noteName} → ${workstation?.name || '未分配'}`,
+          pipeId,
+          beforeData: { workstationId: pipe?.workstationId },
+          afterData: { workstationId },
+        };
+
+        return {
+          pipes: state.pipes.map((p) =>
+            p.id === pipeId ? { ...p, workstationId, updatedAt: new Date().toISOString() } : p
+          ),
+          operationHistory: [...state.operationHistory, opRecord],
+        };
+      }),
+
+    assignPipeToCraftsman: (pipeId, craftsmanId) =>
+      set((state) => {
+        const pipe = state.pipes.find((p) => p.id === pipeId);
+        const craftsman = state.craftsmen.find((c) => c.id === craftsmanId);
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'update',
+          timestamp: new Date().toISOString(),
+          description: `分配音管到制作师: ${pipe?.noteName} → ${craftsman?.name || '未分配'}`,
+          pipeId,
+          beforeData: { assignedCraftsmanId: pipe?.assignedCraftsmanId },
+          afterData: { assignedCraftsmanId: craftsmanId },
+        };
+
+        return {
+          pipes: state.pipes.map((p) =>
+            p.id === pipeId ? { ...p, assignedCraftsmanId: craftsmanId, updatedAt: new Date().toISOString() } : p
+          ),
+          operationHistory: [...state.operationHistory, opRecord],
+        };
+      }),
+
+    batchAssignToWorkstation: (pipeIds, workstationId) =>
+      set((state) => {
+        const workstation = state.workstations.find((w) => w.id === workstationId);
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'batch-verify',
+          timestamp: new Date().toISOString(),
+          description: `批量分配 ${pipeIds.length} 根音管到工位: ${workstation?.name || '未分配'}`,
+          pipeIds,
+          metadata: { workstationId, count: pipeIds.length },
+        };
+
+        return {
+          pipes: state.pipes.map((p) =>
+            pipeIds.includes(p.id) ? { ...p, workstationId, updatedAt: new Date().toISOString() } : p
+          ),
+          operationHistory: [...state.operationHistory, opRecord],
+        };
+      }),
+
+    batchAssignToCraftsman: (pipeIds, craftsmanId) =>
+      set((state) => {
+        const craftsman = state.craftsmen.find((c) => c.id === craftsmanId);
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'batch-verify',
+          timestamp: new Date().toISOString(),
+          description: `批量分配 ${pipeIds.length} 根音管到制作师: ${craftsman?.name || '未分配'}`,
+          pipeIds,
+          metadata: { craftsmanId, count: pipeIds.length },
+        };
+
+        return {
+          pipes: state.pipes.map((p) =>
+            pipeIds.includes(p.id) ? { ...p, assignedCraftsmanId: craftsmanId, updatedAt: new Date().toISOString() } : p
+          ),
+          operationHistory: [...state.operationHistory, opRecord],
+        };
+      }),
+
+    getWorkstationStats: () => {
+      const { pipes, workstations, allowedCentsDeviation } = get();
+      const stats: WorkstationStats[] = [];
+
+      const unassignedPipes = pipes.filter((p) => !p.workstationId);
+      const unassignedDeviations = unassignedPipes
+        .filter((p) => p.centsDeviation !== undefined)
+        .map((p) => Math.abs(p.centsDeviation!));
+
+      stats.push({
+        workstationId: 'unassigned',
+        workstationName: '未分配',
+        totalPipes: unassignedPipes.length,
+        verifiedPipes: unassignedPipes.filter((p) => p.status === 'verified').length,
+        tuningPipes: unassignedPipes.filter((p) => p.status === 'tuning').length,
+        needsReviewPipes: unassignedPipes.filter((p) => p.status === 'needs-review').length,
+        pendingRetestPipes: unassignedPipes.filter((p) => p.status === 'pending-retest').length,
+        avgDeviation: unassignedDeviations.length > 0 ? unassignedDeviations.reduce((a, b) => a + b, 0) / unassignedDeviations.length : 0,
+      });
+
+      for (const ws of workstations) {
+        const wsPipes = pipes.filter((p) => p.workstationId === ws.id);
+        const deviations = wsPipes
+          .filter((p) => p.centsDeviation !== undefined)
+          .map((p) => Math.abs(p.centsDeviation!));
+
+        stats.push({
+          workstationId: ws.id,
+          workstationName: ws.name,
+          totalPipes: wsPipes.length,
+          verifiedPipes: wsPipes.filter((p) => p.status === 'verified').length,
+          tuningPipes: wsPipes.filter((p) => p.status === 'tuning').length,
+          needsReviewPipes: wsPipes.filter((p) => p.status === 'needs-review').length,
+          pendingRetestPipes: wsPipes.filter((p) => p.status === 'pending-retest').length,
+          avgDeviation: deviations.length > 0 ? deviations.reduce((a, b) => a + b, 0) / deviations.length : 0,
+        });
+      }
+
+      return stats;
+    },
+
+    getCraftsmanStats: () => {
+      const { pipes, craftsmen } = get();
+      const stats: CraftsmanStats[] = [];
+
+      for (const craftsman of craftsmen) {
+        const cPipes = pipes.filter((p) => p.assignedCraftsmanId === craftsman.id);
+        const completedTasks = cPipes.filter((p) => p.status === 'verified').length;
+        const deviations = cPipes
+          .filter((p) => p.centsDeviation !== undefined)
+          .map((p) => Math.abs(p.centsDeviation!));
+
+        stats.push({
+          craftsmanId: craftsman.id,
+          craftsmanName: craftsman.name,
+          completedTasks,
+          totalPipesTuned: cPipes.length,
+          avgDeviation: deviations.length > 0 ? deviations.reduce((a, b) => a + b, 0) / deviations.length : 0,
+        });
+      }
+
+      return stats;
+    },
+
+    addWarning: (type, pipeId, severity, message) =>
+      set((state) => {
+        const newWarning: WarningRecord = {
+          id: uuidv4(),
+          type,
+          pipeId,
+          severity,
+          message,
+          timestamp: new Date().toISOString(),
+          resolved: false,
+        };
+
+        return {
+          warnings: [...state.warnings, newWarning],
+          pipes: state.pipes.map((p) =>
+            p.id === pipeId ? { ...p, warningCount: p.warningCount + 1 } : p
+          ),
+        };
+      }),
+
+    resolveWarning: (warningId, resolvedBy) =>
+      set((state) => ({
+        warnings: state.warnings.map((w) =>
+          w.id === warningId
+            ? { ...w, resolved: true, resolvedAt: new Date().toISOString(), resolvedBy }
+            : w
+        ),
+      })),
+
+    resolveWarningsForPipe: (pipeId, resolvedBy) =>
+      set((state) => {
+        const now = new Date().toISOString();
+        return {
+          warnings: state.warnings.map((w) =>
+            w.pipeId === pipeId && !w.resolved
+              ? { ...w, resolved: true, resolvedAt: now, resolvedBy }
+              : w
+          ),
+          pipes: state.pipes.map((p) =>
+            p.id === pipeId ? { ...p, warningCount: 0 } : p
+          ),
+        };
+      }),
+
+    refreshWarnings: () =>
+      set((state) => {
+        const { allowedCentsDeviation, retestThreshold } = state;
+        const newWarnings: WarningRecord[] = [];
+        const now = new Date();
+
+        state.pipes.forEach((pipe) => {
+          if (pipe.centsDeviation !== undefined && Math.abs(pipe.centsDeviation) > allowedCentsDeviation) {
+            const severity = Math.abs(pipe.centsDeviation) > allowedCentsDeviation * 2 ? 'high' : 'medium';
+            const existing = state.warnings.find(
+              (w) => w.pipeId === pipe.id && w.type === 'excessive-deviation' && !w.resolved
+            );
+            if (!existing) {
+              newWarnings.push({
+                id: uuidv4(),
+                type: 'excessive-deviation',
+                pipeId: pipe.id,
+                severity,
+                message: `音管 ${pipe.noteName} 偏差超过允许范围`,
+                timestamp: now.toISOString(),
+                resolved: false,
+              });
+            }
+          }
+
+          if (!pipe.measuredFrequency) {
+            const existing = state.warnings.find(
+              (w) => w.pipeId === pipe.id && w.type === 'no-measured-frequency' && !w.resolved
+            );
+            if (!existing) {
+              newWarnings.push({
+                id: uuidv4(),
+                type: 'no-measured-frequency',
+                pipeId: pipe.id,
+                severity: 'low',
+                message: `音管 ${pipe.noteName} 尚未录入实测频率`,
+                timestamp: now.toISOString(),
+                resolved: false,
+              });
+            }
+          }
+
+          if (pipe.retestCount >= retestThreshold && pipe.status !== 'verified') {
+            const existing = state.warnings.find(
+              (w) => w.pipeId === pipe.id && w.type === 'retest-failed' && !w.resolved
+            );
+            if (!existing) {
+              newWarnings.push({
+                id: uuidv4(),
+                type: 'retest-failed',
+                pipeId: pipe.id,
+                severity: 'high',
+                message: `音管 ${pipe.noteName} 复测次数过多，需重点关注`,
+                timestamp: now.toISOString(),
+                resolved: false,
+              });
+            }
+          }
+        });
+
+        return {
+          warnings: [...state.warnings, ...newWarnings],
+        };
+      }),
+
+    getUnresolvedWarnings: () => {
+      const { warnings } = get();
+      return warnings.filter((w) => !w.resolved);
+    },
+
+    createBatchTask: (name, pipeIds, priority = 'medium', description) => {
+      const taskId = uuidv4();
+      set((state) => {
+        const newTask: BatchTuningTask = {
+          id: taskId,
+          name,
+          description,
+          pipeIds,
+          status: 'pending',
+          priority,
+          createdAt: new Date().toISOString(),
+          progress: 0,
+        };
+
+        const updatedPipes = state.pipes.map((p) =>
+          pipeIds.includes(p.id) ? { ...p, taskId, updatedAt: new Date().toISOString() } : p
+        );
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'batch-add',
+          timestamp: new Date().toISOString(),
+          description: `创建批量任务: ${name} (${pipeIds.length} 根音管)`,
+          pipeIds,
+          metadata: { taskId, taskName: name, count: pipeIds.length },
+        };
+
+        return {
+          batchTasks: [...state.batchTasks, newTask],
+          pipes: updatedPipes,
+          operationHistory: [...state.operationHistory, opRecord],
+        };
+      });
+      return taskId;
+    },
+
+    updateBatchTask: (taskId, updates) =>
+      set((state) => ({
+        batchTasks: state.batchTasks.map((t) =>
+          t.id === taskId ? { ...t, ...updates } : t
+        ),
+      })),
+
+    removeBatchTask: (taskId) =>
+      set((state) => ({
+        batchTasks: state.batchTasks.filter((t) => t.id !== taskId),
+        pipes: state.pipes.map((p) =>
+          p.taskId === taskId ? { ...p, taskId: undefined } : p
+        ),
+      })),
+
+    startBatchTask: (taskId) =>
+      set((state) => ({
+        batchTasks: state.batchTasks.map((t) =>
+          t.id === taskId
+            ? { ...t, status: 'in-progress' as TaskStatus, startedAt: new Date().toISOString() }
+            : t
+        ),
+      })),
+
+    completeBatchTask: (taskId) =>
+      set((state) => ({
+        batchTasks: state.batchTasks.map((t) =>
+          t.id === taskId
+            ? { ...t, status: 'completed' as TaskStatus, completedAt: new Date().toISOString(), progress: 100 }
+            : t
+        ),
+      })),
+
+    assignTaskToWorkstation: (taskId, workstationId) =>
+      set((state) => {
+        const task = state.batchTasks.find((t) => t.id === taskId);
+        if (!task) return {};
+
+        return {
+          batchTasks: state.batchTasks.map((t) =>
+            t.id === taskId ? { ...t, assignedWorkstationId: workstationId } : t
+          ),
+          pipes: state.pipes.map((p) =>
+            task.pipeIds.includes(p.id) ? { ...p, workstationId } : p
+          ),
+        };
+      }),
+
+    assignTaskToCraftsman: (taskId, craftsmanId) =>
+      set((state) => {
+        const task = state.batchTasks.find((t) => t.id === taskId);
+        if (!task) return {};
+
+        return {
+          batchTasks: state.batchTasks.map((t) =>
+            t.id === taskId ? { ...t, assignedCraftsmanId: craftsmanId } : t
+          ),
+          pipes: state.pipes.map((p) =>
+            task.pipeIds.includes(p.id) ? { ...p, assignedCraftsmanId: craftsmanId } : p
+          ),
+        };
+      }),
+
+    updateTaskProgress: (taskId, progress) =>
+      set((state) => ({
+        batchTasks: state.batchTasks.map((t) =>
+          t.id === taskId ? { ...t, progress: Math.min(100, Math.max(0, progress)) } : t
+        ),
+      })),
+
+    getTasksByWorkstation: (workstationId) => {
+      const { batchTasks } = get();
+      return batchTasks.filter((t) => t.assignedWorkstationId === workstationId);
+    },
+
+    getTasksByCraftsman: (craftsmanId) => {
+      const { batchTasks } = get();
+      return batchTasks.filter((t) => t.assignedCraftsmanId === craftsmanId);
+    },
+
+    addRetestRecord: (record) =>
+      set((state) => {
+        const newRecord: RetestRecord = {
+          ...record,
+          id: uuidv4(),
+          timestamp: new Date().toISOString(),
+        };
+        return { retestRecords: [...state.retestRecords, newRecord] };
+      }),
+
+    getRetestRecordsForPipe: (pipeId) => {
+      const { retestRecords } = get();
+      return retestRecords.filter((r) => r.pipeId === pipeId);
+    },
+
+    startRetest: (pipeId) =>
+      set((state) => ({
+        pipes: state.pipes.map((p) =>
+          p.id === pipeId ? { ...p, status: 'pending-retest' as PipeStatus, updatedAt: new Date().toISOString() } : p
+        ),
+      })),
+
+    completeRetest: (pipeId, passed, retestFrequency, notes) =>
+      set((state) => {
+        const pipe = state.pipes.find((p) => p.id === pipeId);
+        if (!pipe || pipe.centsDeviation === undefined) return {};
+
+        const newCents = calculateCentsDeviation(pipe.targetFrequency, retestFrequency);
+        const newStatus = passed
+          ? 'verified' as PipeStatus
+          : Math.abs(newCents) <= state.allowedCentsDeviation
+          ? 'verified' as PipeStatus
+          : 'tuning' as PipeStatus;
+
+        const retestRecord: RetestRecord = {
+          id: uuidv4(),
+          pipeId,
+          originalFrequency: pipe.measuredFrequency ?? pipe.targetFrequency,
+          retestFrequency,
+          originalCentsDeviation: pipe.centsDeviation,
+          retestCentsDeviation: newCents,
+          timestamp: new Date().toISOString(),
+          passed,
+          notes,
+        };
+
+        const opRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'update',
+          timestamp: new Date().toISOString(),
+          description: `复测完成: ${pipe.noteName} - ${passed ? '通过' : '未通过'}`,
+          pipeId,
+          beforeData: { status: pipe.status, centsDeviation: pipe.centsDeviation },
+          afterData: { status: newStatus, centsDeviation: newCents },
+          metadata: { retestCount: pipe.retestCount + 1 },
+        };
+
+        return {
+          pipes: state.pipes.map((p) =>
+            p.id === pipeId
+              ? {
+                  ...p,
+                  measuredFrequency: retestFrequency,
+                  centsDeviation: newCents,
+                  status: newStatus,
+                  retestCount: p.retestCount + 1,
+                  lastRetestAt: new Date().toISOString(),
+                  verifiedAt: newStatus === 'verified' ? new Date().toISOString() : p.verifiedAt,
+                  updatedAt: new Date().toISOString(),
+                }
+              : p
+          ),
+          retestRecords: [...state.retestRecords, retestRecord],
+          operationHistory: [...state.operationHistory, opRecord],
+        };
+      }),
+
+    detectSlotConflicts: () => {
+      const { pipes, slotConflicts } = get();
+      const conflicts: SlotConflict[] = [];
+      const slotMap = new Map<number, string[]>();
+
+      pipes.forEach((pipe) => {
+        if (pipe.slotNumber !== undefined) {
+          const existing = slotMap.get(pipe.slotNumber) || [];
+          existing.push(pipe.id);
+          slotMap.set(pipe.slotNumber, existing);
+        }
+      });
+
+      slotMap.forEach((pipeIds, slotNumber) => {
+        if (pipeIds.length > 1) {
+          const existingConflict = slotConflicts.find(
+            (c) => c.slotNumber === slotNumber && !c.resolved
+          );
+          if (!existingConflict) {
+            conflicts.push({
+              id: uuidv4(),
+              slotNumber,
+              pipeIds,
+              detectedAt: new Date().toISOString(),
+              resolved: false,
+            });
+          }
+        }
+      });
+
+      if (conflicts.length > 0) {
+        set((state) => ({
+          slotConflicts: [...state.slotConflicts, ...conflicts],
+        }));
+      }
+
+      return conflicts;
+    },
+
+    resolveSlotConflict: (conflictId, keepPipeId) =>
+      set((state) => {
+        const conflict = state.slotConflicts.find((c) => c.id === conflictId);
+        if (!conflict) return {};
+
+        const removeSlotPipeIds = conflict.pipeIds.filter((id) => id !== keepPipeId);
+
+        return {
+          slotConflicts: state.slotConflicts.map((c) =>
+            c.id === conflictId
+              ? { ...c, resolved: true, resolvedAt: new Date().toISOString(), resolution: `保留音管 ${keepPipeId}` }
+              : c
+          ),
+          pipes: state.pipes.map((p) =>
+            removeSlotPipeIds.includes(p.id) ? { ...p, slotNumber: undefined } : p
+          ),
+        };
+      }),
+
+    getSlotConflicts: () => {
+      const { slotConflicts } = get();
+      return slotConflicts.filter((c) => !c.resolved);
+    },
+
+    addOperationLog: (action, data) =>
+      set((state) => {
+        const log: OperationLog = {
+          id: uuidv4(),
+          action,
+          timestamp: new Date().toISOString(),
+          ...data,
+        };
+        return { operationLogs: [...state.operationLogs, log] };
+      }),
+
+    getOperationLogsForPipe: (pipeId) => {
+      const { operationLogs } = get();
+      return operationLogs.filter((log) => log.pipeId === pipeId || (log.pipeIds && log.pipeIds.includes(pipeId)));
+    },
+
+    toggleWarningPanel: () =>
+      set((state) => ({ showWarningPanel: !state.showWarningPanel })),
+
+    toggleTaskPanel: () =>
+      set((state) => ({ showTaskPanel: !state.showTaskPanel })),
+
+    toggleWorkstationPanel: () =>
+      set((state) => ({ showWorkstationPanel: !state.showWorkstationPanel })),
+
+    toggleConflictDesk: () =>
+      set((state) => ({ showConflictDesk: !state.showConflictDesk })),
+
+    setShowWarningPanel: (show) => set({ showWarningPanel: show }),
+
+    setShowTaskPanel: (show) => set({ showTaskPanel: show }),
+
+    setShowWorkstationPanel: (show) => set({ showWorkstationPanel: show }),
+
+    setShowConflictDesk: (show) => set({ showConflictDesk: show }),
+
+    setAutoRetestEnabled: (enabled) => set({ autoRetestEnabled: enabled }),
+
+    setRetestThreshold: (threshold) => set({ retestThreshold: threshold }),
   };
 });

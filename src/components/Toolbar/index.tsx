@@ -31,11 +31,18 @@ import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
 import GroupsIcon from '@mui/icons-material/Groups';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import MicIcon from '@mui/icons-material/Mic';
+import WarningIcon from '@mui/icons-material/Warning';
+import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
+import AssignmentIcon from '@mui/icons-material/Assignment';
+import ReportProblemIcon from '@mui/icons-material/ReportProblem';
 import { usePipeStore } from '../../hooks/usePipeStore';
 import { noteToFrequency, getNoteName } from '../../utils/noteConverter';
 import { Pipe } from '../../types';
 import { BatchOperations } from '../BatchOperations';
 import { ImportExportDialog } from '../ImportExportDialog';
+import { SlotConflictDesk } from '../SlotConflictDesk';
+import { BatchTaskScheduler } from '../BatchTaskScheduler';
+import { WorkstationManager } from '../WorkstationManager';
 
 export const ToolbarComponent: React.FC = () => {
   const theme = useTheme();
@@ -53,6 +60,10 @@ export const ToolbarComponent: React.FC = () => {
     togglePitchDetectionPanel,
     showPitchDetectionPanel,
     checkSlotConflict,
+    toggleWarningPanel,
+    showWarningPanel,
+    warnings,
+    detectSlotConflicts,
   } = usePipeStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -69,6 +80,10 @@ export const ToolbarComponent: React.FC = () => {
   const [slotError, setSlotError] = useState('');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [slotConflictDeskOpen, setSlotConflictDeskOpen] = useState(false);
+  const [batchTaskSchedulerOpen, setBatchTaskSchedulerOpen] = useState(false);
+  const [workstationManagerOpen, setWorkstationManagerOpen] = useState(false);
+  const [workstationManagerTab, setWorkstationManagerTab] = useState(0);
 
   const [addGroupDialogOpen, setAddGroupDialogOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
@@ -251,13 +266,13 @@ export const ToolbarComponent: React.FC = () => {
             <MusicNoteIcon sx={{ color: theme.palette.primary.main }} />
             <Box>
               <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '1rem' }}>
-                音管校音工作站
+                专业校音平台
               </Typography>
               <Typography
                 variant="caption"
                 sx={{ color: theme.palette.text.secondary, fontSize: '0.7rem' }}
               >
-                {projectName} · {pipes.length} 根音管
+                {projectName} · {pipes.length} 根音管 · 支持槽位治理/复测闭环/批量协作
               </Typography>
             </Box>
           </Box>
@@ -279,6 +294,77 @@ export const ToolbarComponent: React.FC = () => {
                 }}
               >
                 <MicIcon />
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip title={showWarningPanel ? '关闭预警面板' : '异常预警看板'}>
+              <IconButton
+                onClick={toggleWarningPanel}
+                size="small"
+                color={showWarningPanel ? 'error' : 'default'}
+                sx={{
+                  backgroundColor: showWarningPanel ? 'error.main' : 'transparent',
+                  color: showWarningPanel ? 'white' : 'inherit',
+                  '&:hover': {
+                    backgroundColor: showWarningPanel ? 'error.dark' : 'action.hover',
+                  },
+                }}
+              >
+                <WarningIcon />
+                {warnings.filter((w) => !w.resolved).length > 0 && (
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      top: 2,
+                      right: 2,
+                      minWidth: 14,
+                      height: 14,
+                      borderRadius: 7,
+                      backgroundColor: 'error.main',
+                      color: 'white',
+                      fontSize: '0.6rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {warnings.filter((w) => !w.resolved).length}
+                  </Box>
+                )}
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip title="槽位冲突处理">
+              <IconButton
+                onClick={() => {
+                  detectSlotConflicts();
+                  setSlotConflictDeskOpen(true);
+                }}
+                size="small"
+              >
+                <ReportProblemIcon />
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip title="批量任务编排">
+              <IconButton
+                onClick={() => setBatchTaskSchedulerOpen(true)}
+                size="small"
+              >
+                <AssignmentIcon />
+              </IconButton>
+            </Tooltip>
+
+            <Tooltip title="工位与制作师管理">
+              <IconButton
+                onClick={() => {
+                  setWorkstationManagerTab(0);
+                  setWorkstationManagerOpen(true);
+                }}
+                size="small"
+              >
+                <PrecisionManufacturingIcon />
               </IconButton>
             </Tooltip>
 
@@ -660,6 +746,22 @@ export const ToolbarComponent: React.FC = () => {
         open={importExportOpen}
         onClose={() => setImportExportOpen(false)}
         initialTab={importExportTab}
+      />
+
+      <SlotConflictDesk
+        open={slotConflictDeskOpen}
+        onClose={() => setSlotConflictDeskOpen(false)}
+      />
+
+      <BatchTaskScheduler
+        open={batchTaskSchedulerOpen}
+        onClose={() => setBatchTaskSchedulerOpen(false)}
+      />
+
+      <WorkstationManager
+        open={workstationManagerOpen}
+        onClose={() => setWorkstationManagerOpen(false)}
+        initialTab={workstationManagerTab}
       />
     </>
   );

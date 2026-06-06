@@ -28,6 +28,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import WarningIcon from '@mui/icons-material/Warning';
 import ErrorIcon from '@mui/icons-material/Error';
 import ScheduleIcon from '@mui/icons-material/Schedule';
+import ReplayIcon from '@mui/icons-material/Replay';
 import { usePipeStore } from '../../hooks/usePipeStore';
 import { PipeStatus, Pipe } from '../../types';
 import { CentsGauge } from './CentsGauge';
@@ -45,6 +46,8 @@ export const PipeDetailPanel: React.FC = () => {
     selectedPipeId,
     pipes,
     groups,
+    workstations,
+    craftsmen,
     allowedCentsDeviation,
     updatePipeFrequency,
     updateTargetFrequency,
@@ -56,6 +59,8 @@ export const PipeDetailPanel: React.FC = () => {
     validateTargetFrequency,
     movePipeToGroup,
     checkSlotConflict,
+    assignPipeToWorkstation,
+    assignPipeToCraftsman,
   } = usePipeStore();
 
   const [trimDialogOpen, setTrimDialogOpen] = useState(false);
@@ -201,6 +206,20 @@ export const PipeDetailPanel: React.FC = () => {
     if (selectedPipe) {
       const groupId = e.target.value;
       movePipeToGroup(selectedPipe.id, groupId === 'none' ? undefined : groupId);
+    }
+  };
+
+  const handleWorkstationChange = (e: SelectChangeEvent<string>) => {
+    if (selectedPipe) {
+      const wsId = e.target.value;
+      assignPipeToWorkstation(selectedPipe.id, wsId === 'none' ? undefined : wsId);
+    }
+  };
+
+  const handleCraftsmanChange = (e: SelectChangeEvent<string>) => {
+    if (selectedPipe) {
+      const cId = e.target.value;
+      assignPipeToCraftsman(selectedPipe.id, cId === 'none' ? undefined : cId);
     }
   };
 
@@ -547,6 +566,7 @@ export const PipeDetailPanel: React.FC = () => {
               <MenuItem value="tuning">调校中</MenuItem>
               <MenuItem value="verified">已定音</MenuItem>
               <MenuItem value="needs-review">待复核</MenuItem>
+              <MenuItem value="pending-retest">待复测</MenuItem>
             </Select>
           </FormControl>
 
@@ -575,6 +595,60 @@ export const PipeDetailPanel: React.FC = () => {
               ))}
             </Select>
           </FormControl>
+
+          <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+            <InputLabel>分配工位</InputLabel>
+            <Select
+              value={selectedPipe.workstationId || 'none'}
+              label="分配工位"
+              onChange={handleWorkstationChange}
+            >
+              <MenuItem value="none">未分配</MenuItem>
+              {workstations.map((ws) => (
+                <MenuItem key={ws.id} value={ws.id}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box
+                      sx={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        backgroundColor: ws.color,
+                      }}
+                    />
+                    {ws.name}
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+            <InputLabel>制作师</InputLabel>
+            <Select
+              value={selectedPipe.assignedCraftsmanId || 'none'}
+              label="制作师"
+              onChange={handleCraftsmanChange}
+            >
+              <MenuItem value="none">未分配</MenuItem>
+              {craftsmen.map((c) => (
+                <MenuItem key={c.id} value={c.id}>
+                  {c.name}
+                  {c.role && ` (${c.role})`}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          {selectedPipe.retestCount > 0 && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <ReplayIcon sx={{ fontSize: 14, color: theme.palette.text.secondary }} />
+              <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+                复测次数: {selectedPipe.retestCount} 次
+                {selectedPipe.lastRetestAt &&
+                  ` · 上次: ${new Date(selectedPipe.lastRetestAt).toLocaleString('zh-CN')}`}
+              </Typography>
+            </Box>
+          )}
 
           {selectedPipe.verifiedAt && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>

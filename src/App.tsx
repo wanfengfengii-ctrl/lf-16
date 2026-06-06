@@ -9,11 +9,12 @@ import { SlotOccupancyView } from './components/SlotOccupancyView';
 import { SearchFilterPanel } from './components/SearchFilterPanel';
 import { OperationHistoryPanel } from './components/OperationHistoryPanel';
 import { PitchDetectionCenter } from './components/PitchDetectionCenter';
+import { WarningDashboard } from './components/WarningDashboard';
 import { usePipeStore } from './hooks/usePipeStore';
 
 function AppContent() {
   const theme = useTheme();
-  const { showPitchDetectionPanel } = usePipeStore();
+  const { showPitchDetectionPanel, showWarningPanel } = usePipeStore();
 
   return (
     <Box
@@ -42,6 +43,7 @@ function AppContent() {
           }}
         >
           <SearchFilterPanel compact={false} />
+          {showWarningPanel && <WarningDashboard compact={false} />}
         </Box>
 
         <Box
