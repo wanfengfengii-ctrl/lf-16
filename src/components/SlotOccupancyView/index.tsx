@@ -6,6 +6,7 @@ import {
   useTheme,
   Chip,
 } from '@mui/material';
+import WarningIcon from '@mui/icons-material/Warning';
 import { usePipeStore } from '../../hooks/usePipeStore';
 import { getStatusColor, getStatusText } from '../../utils/centsCalculator';
 import { Pipe } from '../../types';
@@ -19,23 +20,24 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
   const { pipes, totalSlots, selectedPipeId, setSelectedPipe, highlightedPipeIds, allowedCentsDeviation } = usePipeStore();
 
   const slotOccupancy = useMemo(() => {
-    const occupancy: Array<{ slot: number; pipe: Pipe | null }> = [];
+    const occupancy: Array<{ slot: number; pipes: Pipe[]; hasConflict: boolean }> = [];
     for (let i = 1; i <= totalSlots; i++) {
-      const pipe = pipes.find((p) => p.slotNumber === i) || null;
-      occupancy.push({ slot: i, pipe });
+      const slotPipes = pipes.filter((p) => p.slotNumber === i);
+      occupancy.push({ slot: i, pipes: slotPipes, hasConflict: slotPipes.length > 1 });
     }
     return occupancy;
   }, [pipes, totalSlots]);
 
   const stats = useMemo(() => {
-    const occupied = pipes.filter((p) => p.slotNumber !== undefined).length;
-    const empty = totalSlots - occupied;
-    return { occupied, empty, total: totalSlots };
-  }, [pipes, totalSlots]);
+    const occupiedSlots = slotOccupancy.filter((s) => s.pipes.length > 0).length;
+    const conflictSlots = slotOccupancy.filter((s) => s.hasConflict).length;
+    const empty = totalSlots - occupiedSlots;
+    return { occupied: occupiedSlots, empty, conflict: conflictSlots, total: totalSlots };
+  }, [slotOccupancy, totalSlots]);
 
-  const handleSlotClick = (pipe: Pipe | null) => {
-    if (pipe) {
-      setSelectedPipe(pipe.id);
+  const handleSlotClick = (slotPipes: Pipe[]) => {
+    if (slotPipes.length > 0) {
+      setSelectedPipe(slotPipes[0].id);
     }
   };
 
@@ -64,47 +66,81 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
             gap: 0.5,
           }}
         >
-          {slotOccupancy.map(({ slot, pipe }) => {
-            const isHighlighted = highlightedPipeIds.includes(pipe?.id || '');
-            const isSelected = selectedPipeId === pipe?.id;
-            const color = pipe
-              ? getStatusColor(pipe.centsDeviation, allowedCentsDeviation, pipe.status)
+          {slotOccupancy.map(({ slot, pipes: slotPipes, hasConflict }) => {
+            const primaryPipe = slotPipes.length > 0 ? slotPipes[0] : null;
+            const isHighlighted = highlightedPipeIds.some((id) => slotPipes.some((p) => p.id === id));
+            const isSelected = selectedPipeId && slotPipes.some((p) => p.id === selectedPipeId);
+            const color = primaryPipe
+              ? getStatusColor(primaryPipe.centsDeviation, allowedCentsDeviation, primaryPipe.status)
               : null;
 
             return (
               <Tooltip
                 key={slot}
                 title={
-                  pipe
-                    ? `${pipe.noteName} - ${getStatusText(pipe.status)}`
-                    : `槽位 ${slot} - 空闲`
+                  slotPipes.length > 0 ? (
+                    <Box sx={{ p: 0.5 }}>
+                      {slotPipes.map((p) => (
+                        <Typography key={p.id} variant="body2">
+                          {p.noteName} - {getStatusText(p.status)}
+                        </Typography>
+                      ))}
+                      {hasConflict && (
+                        <Typography variant="caption" sx={{ color: theme.palette.error.main }}>
+                          ⚠️ 槽位冲突 ({slotPipes.length} 根音管)
+                        </Typography>
+                      )}
+                    </Box>
+                  ) : (
+                    `槽位 ${slot} - 空闲`
+                  )
                 }
                 arrow
                 placement="top"
               >
                 <Box
-                  onClick={() => handleSlotClick(pipe)}
+                  onClick={() => handleSlotClick(slotPipes)}
                   sx={{
                     aspectRatio: '1',
                     borderRadius: 1,
-                    backgroundColor: pipe ? color?.main : theme.palette.divider,
-                    opacity: pipe ? 1 : 0.3,
-                    cursor: pipe ? 'pointer' : 'default',
+                    backgroundColor: primaryPipe ? color?.main : theme.palette.divider,
+                    opacity: primaryPipe ? 1 : 0.3,
+                    cursor: primaryPipe ? 'pointer' : 'default',
                     transition: 'all 0.2s ease',
+                    position: 'relative',
                     border: isSelected
                       ? `2px solid ${theme.palette.primary.main}`
                       : isHighlighted
                       ? `2px solid ${theme.palette.secondary.main}`
+                      : hasConflict
+                      ? `2px solid ${theme.palette.error.main}`
                       : 'none',
                     boxShadow: isSelected
                       ? `0 0 8px ${theme.palette.primary.main}60`
+                      : hasConflict
+                      ? `0 0 6px ${theme.palette.error.main}60`
                       : 'none',
                     '&:hover': {
-                      transform: pipe ? 'scale(1.2)' : 'none',
+                      transform: primaryPipe ? 'scale(1.2)' : 'none',
                       zIndex: 1,
                     },
                   }}
-                />
+                >
+                  {hasConflict && (
+                    <Box
+                      sx={{
+                        position: 'absolute',
+                        top: -2,
+                        right: -2,
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        backgroundColor: theme.palette.error.main,
+                        border: `1px solid ${theme.palette.background.paper}`,
+                      }}
+                    />
+                  )}
+                </Box>
               </Tooltip>
             );
           })}
@@ -136,6 +172,15 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
             color="primary"
             variant="outlined"
           />
+          {stats.conflict > 0 && (
+            <Chip
+              label={`冲突 ${stats.conflict}`}
+              size="small"
+              color="error"
+              variant="outlined"
+              icon={<WarningIcon sx={{ fontSize: 12 }} />}
+            />
+          )}
           <Chip
             label={`空闲 ${stats.empty}`}
             size="small"
@@ -157,35 +202,43 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
           borderRadius: 1,
         }}
       >
-        {slotOccupancy.map(({ slot, pipe }) => {
-          const isHighlighted = highlightedPipeIds.includes(pipe?.id || '');
-          const isSelected = selectedPipeId === pipe?.id;
-          const color = pipe
-            ? getStatusColor(pipe.centsDeviation, allowedCentsDeviation, pipe.status)
+        {slotOccupancy.map(({ slot, pipes: slotPipes, hasConflict }) => {
+          const primaryPipe = slotPipes.length > 0 ? slotPipes[0] : null;
+          const isHighlighted = highlightedPipeIds.some((id) => slotPipes.some((p) => p.id === id));
+          const isSelected = selectedPipeId && slotPipes.some((p) => p.id === selectedPipeId);
+          const color = primaryPipe
+            ? getStatusColor(primaryPipe.centsDeviation, allowedCentsDeviation, primaryPipe.status)
             : null;
 
           return (
             <Tooltip
               key={slot}
               title={
-                pipe ? (
+                slotPipes.length > 0 ? (
                   <Box sx={{ p: 0.5 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {pipe.noteName}
-                    </Typography>
-                    <Typography variant="caption">槽位: {slot}</Typography>
-                    <br />
-                    <Typography variant="caption">
-                      状态: {getStatusText(pipe.status)}
-                    </Typography>
-                    {pipe.centsDeviation !== undefined && (
-                      <>
-                        <br />
-                        <Typography variant="caption">
-                          偏差: {pipe.centsDeviation > 0 ? '+' : ''}
-                          {pipe.centsDeviation.toFixed(2)} c
+                    {slotPipes.map((p) => (
+                      <Box key={p.id} sx={{ mb: slotPipes.length > 1 ? 0.5 : 0 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                          {p.noteName}
                         </Typography>
-                      </>
+                        <Typography variant="caption">
+                          状态: {getStatusText(p.status)}
+                        </Typography>
+                        {p.centsDeviation !== undefined && (
+                          <Typography variant="caption">
+                            {' '}偏差: {p.centsDeviation > 0 ? '+' : ''}
+                            {p.centsDeviation.toFixed(2)} c
+                          </Typography>
+                        )}
+                      </Box>
+                    ))}
+                    {hasConflict && (
+                      <Typography
+                        variant="caption"
+                        sx={{ color: theme.palette.error.main, fontWeight: 600 }}
+                      >
+                        ⚠️ 槽位冲突：{slotPipes.length} 根音管共用此槽位
+                      </Typography>
                     )}
                   </Box>
                 ) : (
@@ -196,19 +249,23 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
               placement="top"
             >
               <Box
-                onClick={() => handleSlotClick(pipe)}
+                onClick={() => handleSlotClick(slotPipes)}
                 sx={{
                   aspectRatio: '1',
                   borderRadius: 1,
-                  backgroundColor: pipe ? color?.bg : theme.palette.background.paper,
+                  backgroundColor: primaryPipe ? color?.bg : theme.palette.background.paper,
                   border: `2px solid ${
-                    pipe ? color?.main : theme.palette.divider
+                    hasConflict
+                      ? theme.palette.error.main
+                      : primaryPipe
+                      ? color?.main
+                      : theme.palette.divider
                   }`,
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  cursor: pipe ? 'pointer' : 'default',
+                  cursor: primaryPipe ? 'pointer' : 'default',
                   transition: 'all 0.2s ease',
                   position: 'relative',
                   ...(isSelected && {
@@ -219,13 +276,18 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
                     borderColor: theme.palette.secondary.main,
                     boxShadow: `0 0 8px ${theme.palette.secondary.main}40`,
                   }),
+                  ...(hasConflict && !isSelected && !isHighlighted && {
+                    boxShadow: `0 0 8px ${theme.palette.error.main}40`,
+                  }),
                   '&:hover': {
-                    transform: pipe ? 'translateY(-2px)' : 'none',
-                    boxShadow: pipe ? `0 4px 12px ${color?.main}40` : 'none',
+                    transform: primaryPipe ? 'translateY(-2px)' : 'none',
+                    boxShadow: primaryPipe
+                      ? `0 4px 12px ${hasConflict ? theme.palette.error.main : color?.main}40`
+                      : 'none',
                   },
                 }}
               >
-                {pipe ? (
+                {primaryPipe ? (
                   <>
                     <Typography
                       variant="caption"
@@ -236,7 +298,7 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
                         fontWeight: 600,
                       }}
                     >
-                      {pipe.noteName.replace(/\d+/, '')}
+                      {primaryPipe.noteName.replace(/\d+/, '')}
                     </Typography>
                     <Typography
                       variant="caption"
@@ -248,6 +310,28 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
                     >
                       #{slot}
                     </Typography>
+                    {hasConflict && (
+                      <Box
+                        sx={{
+                          position: 'absolute',
+                          top: -2,
+                          right: -2,
+                          width: 12,
+                          height: 12,
+                          borderRadius: '50%',
+                          backgroundColor: theme.palette.error.main,
+                          color: 'white',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '0.5rem',
+                          fontWeight: 700,
+                          border: `1px solid ${theme.palette.background.paper}`,
+                        }}
+                      >
+                        {slotPipes.length}
+                      </Box>
+                    )}
                   </>
                 ) : (
                   <Typography
@@ -305,6 +389,19 @@ export const SlotOccupancyView: React.FC<SlotOccupancyViewProps> = ({ compact = 
           />
           <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
             调校中
+          </Typography>
+        </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <Box
+            sx={{
+              width: 10,
+              height: 10,
+              borderRadius: '50%',
+              backgroundColor: theme.palette.error.main,
+            }}
+          />
+          <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+            槽位冲突
           </Typography>
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>

@@ -60,7 +60,9 @@ interface PipeStore extends WorkspaceState {
   ) => void;
 
   setTotalSlots: (slots: number) => void;
-  getSlotOccupancy: () => Array<{ slot: number; pipeId: string | null; pipe?: Pipe }>;
+  getSlotOccupancy: () => Array<{ slot: number; pipeId: string | null; pipe?: Pipe; conflict?: boolean }>;
+  isSlotOccupied: (slotNumber: number, excludePipeId?: string) => boolean;
+  getPipesBySlot: (slotNumber: number) => Pipe[];
 
   exportProject: () => ProjectFile;
   importProject: (project: ProjectFile, mode?: 'replace' | 'merge') => void;
@@ -154,11 +156,12 @@ export const usePipeStore = create<PipeStore>((set, get) => {
     removePipe: (id) =>
       set((state) => {
         const pipeToRemove = state.pipes.find((p) => p.id === id);
+        const removedIndex = state.pipes.findIndex((p) => p.id === id);
         const filtered = state.pipes.filter((p) => p.id !== id);
         const repositioned = filtered.map((p, idx) => ({ ...p, keyPosition: idx + 1 }));
 
-        const repositionedWithReview = repositioned.map((p) => {
-          if (p.status === 'verified' && pipeToRemove && p.keyPosition !== p.keyPosition) {
+        const repositionedWithReview = repositioned.map((p, idx) => {
+          if (p.status === 'verified' && removedIndex >= 0 && idx >= removedIndex) {
             return { ...p, status: 'needs-review' as PipeStatus, needsReviewReason: '位置变更需复核' };
           }
           return p;
@@ -677,18 +680,30 @@ export const usePipeStore = create<PipeStore>((set, get) => {
 
     getSlotOccupancy: () => {
       const { pipes, totalSlots } = get();
-      const occupancy: Array<{ slot: number; pipeId: string | null; pipe?: Pipe }> = [];
+      const occupancy: Array<{ slot: number; pipeId: string | null; pipe?: Pipe; conflict?: boolean }> = [];
 
       for (let i = 1; i <= totalSlots; i++) {
-        const pipe = pipes.find((p) => p.slotNumber === i);
+        const pipesInSlot = pipes.filter((p) => p.slotNumber === i);
+        const hasConflict = pipesInSlot.length > 1;
         occupancy.push({
           slot: i,
-          pipeId: pipe?.id || null,
-          pipe,
+          pipeId: pipesInSlot.length > 0 ? pipesInSlot[0].id : null,
+          pipe: pipesInSlot.length > 0 ? pipesInSlot[0] : undefined,
+          conflict: hasConflict,
         });
       }
 
       return occupancy;
+    },
+
+    isSlotOccupied: (slotNumber, excludePipeId) => {
+      const { pipes } = get();
+      return pipes.some((p) => p.slotNumber === slotNumber && p.id !== excludePipeId);
+    },
+
+    getPipesBySlot: (slotNumber) => {
+      const { pipes } = get();
+      return pipes.filter((p) => p.slotNumber === slotNumber);
     },
 
     exportProject: (): ProjectFile => {

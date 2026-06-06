@@ -29,7 +29,7 @@ import WarningIcon from '@mui/icons-material/Warning';
 import ErrorIcon from '@mui/icons-material/Error';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import { usePipeStore } from '../../hooks/usePipeStore';
-import { PipeStatus } from '../../types';
+import { PipeStatus, Pipe } from '../../types';
 import { CentsGauge } from './CentsGauge';
 import { TrimHistory } from './TrimHistory';
 import {
@@ -55,6 +55,8 @@ export const PipeDetailPanel: React.FC = () => {
     validateFrequency,
     validateTargetFrequency,
     movePipeToGroup,
+    isSlotOccupied,
+    getPipesBySlot,
   } = usePipeStore();
 
   const [trimDialogOpen, setTrimDialogOpen] = useState(false);
@@ -68,6 +70,19 @@ export const PipeDetailPanel: React.FC = () => {
   const [measuredFreqWarning, setMeasuredFreqWarning] = useState<string[]>([]);
 
   const selectedPipe = pipes.find((p) => p.id === selectedPipeId);
+
+  const slotConflictInfo = useMemo(() => {
+    if (!selectedPipe || selectedPipe.slotNumber === undefined) {
+      return { hasConflict: false, conflictingPipes: [] as Pipe[] };
+    }
+    const pipesInSlot = getPipesBySlot(selectedPipe.slotNumber).filter(
+      (p) => p.id !== selectedPipe.id
+    );
+    return {
+      hasConflict: pipesInSlot.length > 0,
+      conflictingPipes: pipesInSlot,
+    };
+  }, [selectedPipe?.id, selectedPipe?.slotNumber, getPipesBySlot]);
 
   useEffect(() => {
     if (selectedPipe) {
@@ -420,11 +435,56 @@ export const PipeDetailPanel: React.FC = () => {
             onChange={handleSlotChange}
             size="small"
             placeholder="可选"
-            sx={{ mb: 1, ...textFieldSx }}
+            sx={{ mb: slotConflictInfo.hasConflict ? 0.5 : 1, ...textFieldSx }}
+            error={slotConflictInfo.hasConflict}
+            helperText={
+              slotConflictInfo.hasConflict
+                ? `⚠️ 槽位冲突：已被 ${slotConflictInfo.conflictingPipes.map((p) => p.noteName).join('、')} 占用`
+                : ''
+            }
             slotProps={{
               htmlInput: { min: 1 },
+              input: {
+                endAdornment: slotConflictInfo.hasConflict ? (
+                  <WarningIcon color="error" sx={{ fontSize: 18 }} />
+                ) : null,
+              },
+              formHelperText: {
+                sx: { color: theme.palette.error.main },
+              },
             }}
           />
+          {slotConflictInfo.hasConflict && (
+            <Box
+              sx={{
+                mb: 1,
+                p: 1,
+                backgroundColor: `${theme.palette.error.main}10`,
+                borderRadius: 1,
+                border: `1px solid ${theme.palette.error.main}30`,
+              }}
+            >
+              <Typography variant="caption" sx={{ color: theme.palette.error.main, fontSize: '0.7rem' }}>
+                {slotConflictInfo.conflictingPipes.length} 根音管共用此槽位
+              </Typography>
+              {slotConflictInfo.conflictingPipes.map((p) => (
+                <Chip
+                  key={p.id}
+                  label={p.noteName}
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    mr: 0.5,
+                    mt: 0.5,
+                    height: 20,
+                    fontSize: '0.65rem',
+                    borderColor: theme.palette.error.main,
+                    color: theme.palette.error.main,
+                  }}
+                />
+              ))}
+            </Box>
+          )}
         </Box>
 
         <Divider sx={{ my: 2 }} />
