@@ -8,9 +8,12 @@ import { DeviationChart } from './components/Visualizations/DeviationChart';
 import { SlotOccupancyView } from './components/SlotOccupancyView';
 import { SearchFilterPanel } from './components/SearchFilterPanel';
 import { OperationHistoryPanel } from './components/OperationHistoryPanel';
+import { PitchDetectionCenter } from './components/PitchDetectionCenter';
+import { usePipeStore } from './hooks/usePipeStore';
 
 function AppContent() {
   const theme = useTheme();
+  const { showPitchDetectionPanel } = usePipeStore();
 
   return (
     <Box
@@ -89,6 +92,22 @@ function AppContent() {
         >
           <PipeDetailPanel />
         </Box>
+
+        {showPitchDetectionPanel && (
+          <Box
+            sx={{
+              flex: '0 0 380px',
+              width: 380,
+              backgroundColor: theme.palette.background.paper,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              borderLeft: `1px solid ${theme.palette.divider}`,
+            }}
+          >
+            <PitchDetectionCenter />
+          </Box>
+        )}
       </Box>
     </Box>
   );

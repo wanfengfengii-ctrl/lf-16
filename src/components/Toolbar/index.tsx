@@ -30,6 +30,7 @@ import MusicNoteIcon from '@mui/icons-material/MusicNote';
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck';
 import GroupsIcon from '@mui/icons-material/Groups';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import MicIcon from '@mui/icons-material/Mic';
 import { usePipeStore } from '../../hooks/usePipeStore';
 import { noteToFrequency, getNoteName } from '../../utils/noteConverter';
 import { Pipe } from '../../types';
@@ -49,6 +50,8 @@ export const ToolbarComponent: React.FC = () => {
     totalSlots,
     setTotalSlots,
     addGroup,
+    togglePitchDetectionPanel,
+    showPitchDetectionPanel,
   } = usePipeStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -223,6 +226,23 @@ export const ToolbarComponent: React.FC = () => {
           <Box sx={{ flexGrow: 1 }} />
 
           <Box sx={{ display: 'flex', gap: 0.5 }}>
+            <Tooltip title="录音测频">
+              <IconButton
+                onClick={togglePitchDetectionPanel}
+                size="small"
+                color={showPitchDetectionPanel ? 'primary' : 'default'}
+                sx={{
+                  backgroundColor: showPitchDetectionPanel ? 'primary.main' : 'transparent',
+                  color: showPitchDetectionPanel ? 'white' : 'inherit',
+                  '&:hover': {
+                    backgroundColor: showPitchDetectionPanel ? 'primary.dark' : 'action.hover',
+                  },
+                }}
+              >
+                <MicIcon />
+              </IconButton>
+            </Tooltip>
+
             <Tooltip title="添加音管">
               <IconButton onClick={handleAddClick} size="small" color="primary">
                 <AddIcon />

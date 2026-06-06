@@ -12,6 +12,7 @@ import {
   ValidationResult,
   ProjectFile,
   GroupStats,
+  PitchDetectionSession,
 } from '../types';
 import { calculateCentsDeviation } from '../utils/centsCalculator';
 import { generateMockPipes, generateMockGroups } from '../utils/mockData';
@@ -68,6 +69,18 @@ interface PipeStore extends WorkspaceState {
   importProject: (project: ProjectFile, mode?: 'replace' | 'merge') => void;
 
   setProjectName: (name: string) => void;
+
+  addPitchDetectionSession: (session: Omit<PitchDetectionSession, 'id' | 'startTime'>) => string;
+  removePitchDetectionSession: (sessionId: string) => void;
+  getPitchDetectionSessionsForPipe: (pipeId: string) => PitchDetectionSession[];
+  writeMeasuredFrequencyFromSession: (
+    pipeId: string,
+    frequency: number,
+    sessionId?: string
+  ) => void;
+
+  togglePitchDetectionPanel: () => void;
+  setShowPitchDetectionPanel: (show: boolean) => void;
 }
 
 function recalculateStatus(
@@ -128,6 +141,8 @@ export const usePipeStore = create<PipeStore>((set, get) => {
     totalSlots: 61,
     highlightedPipeIds: [],
     projectName: '未命名工程',
+    pitchDetectionSessions: [],
+    showPitchDetectionPanel: false,
 
     setSelectedPipe: (id) => set({ selectedPipeId: id }),
 
@@ -771,5 +786,48 @@ export const usePipeStore = create<PipeStore>((set, get) => {
       }),
 
     setProjectName: (name) => set({ projectName: name }),
+
+    addPitchDetectionSession: (sessionData) => {
+      const sessionId = uuidv4();
+      const newSession: PitchDetectionSession = {
+        ...sessionData,
+        id: sessionId,
+        startTime: new Date().toISOString(),
+      };
+      set((state) => ({
+        pitchDetectionSessions: [...state.pitchDetectionSessions, newSession],
+      }));
+      return sessionId;
+    },
+
+    removePitchDetectionSession: (sessionId) =>
+      set((state) => ({
+        pitchDetectionSessions: state.pitchDetectionSessions.filter((s) => s.id !== sessionId),
+      })),
+
+    getPitchDetectionSessionsForPipe: (pipeId) => {
+      const { pitchDetectionSessions } = get();
+      return pitchDetectionSessions.filter((s) => s.pipeId === pipeId);
+    },
+
+    writeMeasuredFrequencyFromSession: (pipeId, frequency, sessionId) => {
+      const { updatePipeFrequency, addTrimRecord, pipes } = get();
+      const pipe = pipes.find((p) => p.id === pipeId);
+
+      if (pipe && pipe.measuredFrequency) {
+        addTrimRecord(pipeId, {
+          beforeFrequency: pipe.measuredFrequency,
+          afterFrequency: frequency,
+          description: sessionId ? '录音测频自动写入' : '录音测频写入',
+        });
+      }
+
+      updatePipeFrequency(pipeId, frequency);
+    },
+
+    togglePitchDetectionPanel: () =>
+      set((state) => ({ showPitchDetectionPanel: !state.showPitchDetectionPanel })),
+
+    setShowPitchDetectionPanel: (show) => set({ showPitchDetectionPanel: show }),
   };
 });
