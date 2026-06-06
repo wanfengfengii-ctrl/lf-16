@@ -27,6 +27,7 @@ export const PipeMatrix: React.FC = () => {
     pipes,
     groups,
     movePipe,
+    reorderPipesInGroup,
     selectedPipeId,
     getFilteredPipes,
     selectedGroupId,
@@ -73,9 +74,13 @@ export const PipeMatrix: React.FC = () => {
       const newIndex = sortedPipes.findIndex((p) => p.id === over.id);
 
       if (oldIndex !== -1 && newIndex !== -1) {
-        const allOldIndex = pipes.findIndex((p) => p.id === active.id);
-        const allNewIndex = pipes.findIndex((p) => p.id === over.id);
-        movePipe(allOldIndex, allNewIndex);
+        if (selectedGroupId === 'all') {
+          const allOldIndex = pipes.findIndex((p) => p.id === active.id);
+          const allNewIndex = pipes.findIndex((p) => p.id === over.id);
+          movePipe(allOldIndex, allNewIndex);
+        } else {
+          reorderPipesInGroup(selectedGroupId, oldIndex, newIndex);
+        }
       }
     }
   };

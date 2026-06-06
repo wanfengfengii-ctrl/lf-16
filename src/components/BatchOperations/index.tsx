@@ -67,6 +67,7 @@ export const BatchOperations: React.FC<BatchOperationsProps> = ({
     batchMoveToGroup,
     validateTargetFrequency,
     allowedCentsDeviation,
+    checkSlotConflict,
   } = usePipeStore();
 
   const [batchEntries, setBatchEntries] = useState<BatchEntry[]>([]);
@@ -94,13 +95,41 @@ export const BatchOperations: React.FC<BatchOperationsProps> = ({
     setTabValue(newValue);
   };
 
-  const validateEntry = (entry: Omit<BatchEntry, 'errors'>): string[] => {
+  const validateEntry = (entry: Omit<BatchEntry, 'errors'>, allEntries?: Omit<BatchEntry, 'errors'>[]): string[] => {
     const errors: string[] = [];
     const validation = validateTargetFrequency(entry.targetFrequency);
     if (!validation.valid) {
       errors.push(...validation.errors);
     }
+
+    if (entry.slotNumber !== undefined && entry.slotNumber !== null) {
+      if (entry.slotNumber <= 0) {
+        errors.push('槽位号必须大于 0');
+      } else {
+        const conflictPipe = checkSlotConflict(entry.slotNumber);
+        if (conflictPipe) {
+          errors.push(`槽位 #${entry.slotNumber} 已被音管 ${conflictPipe.noteName} 占用`);
+        }
+
+        if (allEntries) {
+          const dupCount = allEntries.filter(
+            (e) => e.slotNumber === entry.slotNumber && e.id !== entry.id
+          ).length;
+          if (dupCount > 0) {
+            errors.push(`槽位 #${entry.slotNumber} 在批量数据中重复`);
+          }
+        }
+      }
+    }
+
     return errors;
+  };
+
+  const revalidateAllSlots = (entries: BatchEntry[]): BatchEntry[] => {
+    return entries.map((entry) => ({
+      ...entry,
+      errors: validateEntry(entry, entries),
+    }));
   };
 
   const addEntry = () => {
@@ -110,37 +139,38 @@ export const BatchOperations: React.FC<BatchOperationsProps> = ({
       targetFrequency: 261.63,
       errors: [],
     };
-    setBatchEntries([...batchEntries, newEntry]);
+    const newEntries = [...batchEntries, newEntry];
+    setBatchEntries(revalidateAllSlots(newEntries));
   };
 
   const updateEntry = (id: string, field: keyof BatchEntry, value: string | number) => {
-    setBatchEntries(
-      batchEntries.map((entry) => {
-        if (entry.id !== id) return entry;
-        let updated = { ...entry, [field]: value };
+    const updatedEntries = batchEntries.map((entry) => {
+      if (entry.id !== id) return entry;
+      let updated = { ...entry, [field]: value };
 
-        if (field === 'noteName') {
-          const note = value as string;
-          const match = note.match(/^([A-G]#?)(\d)$/);
-          if (match) {
-            const freq = noteToFrequency(match[1], parseInt(match[2]));
-            updated = { ...updated, targetFrequency: freq };
-          }
-        } else if (field === 'targetFrequency') {
-          const freq = parseFloat(value as string);
-          if (!isNaN(freq) && freq > 0) {
-            updated = { ...updated, noteName: getNoteName(freq) };
-          }
+      if (field === 'noteName') {
+        const note = value as string;
+        const match = note.match(/^([A-G]#?)(\d)$/);
+        if (match) {
+          const freq = noteToFrequency(match[1], parseInt(match[2]));
+          updated = { ...updated, targetFrequency: freq };
         }
+      } else if (field === 'targetFrequency') {
+        const freq = parseFloat(value as string);
+        if (!isNaN(freq) && freq > 0) {
+          updated = { ...updated, noteName: getNoteName(freq) };
+        }
+      }
 
-        updated.errors = validateEntry(updated);
-        return updated;
-      })
-    );
+      return updated;
+    });
+
+    setBatchEntries(revalidateAllSlots(updatedEntries));
   };
 
   const removeEntry = (id: string) => {
-    setBatchEntries(batchEntries.filter((e) => e.id !== id));
+    const newEntries = batchEntries.filter((e) => e.id !== id);
+    setBatchEntries(revalidateAllSlots(newEntries));
   };
 
   const parseBulkText = () => {
@@ -185,12 +215,11 @@ export const BatchOperations: React.FC<BatchOperationsProps> = ({
           slotNumber,
           errors: [],
         };
-        entry.errors = validateEntry(entry);
         entries.push(entry);
       }
     }
 
-    setBatchEntries(entries);
+    setBatchEntries(revalidateAllSlots(entries));
   };
 
   const handleBatchAdd = () => {
@@ -367,6 +396,7 @@ export const BatchOperations: React.FC<BatchOperationsProps> = ({
                               updateEntry(entry.id, 'slotNumber', parseInt(e.target.value) || undefined)
                             }
                             sx={{ width: 80 }}
+                            error={entry.errors.some((err) => err.includes('槽位'))}
                             slotProps={{
                               htmlInput: { style: { fontFamily: "'JetBrains Mono', monospace" } },
                             }}

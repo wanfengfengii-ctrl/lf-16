@@ -55,8 +55,7 @@ export const PipeDetailPanel: React.FC = () => {
     validateFrequency,
     validateTargetFrequency,
     movePipeToGroup,
-    isSlotOccupied,
-    getPipesBySlot,
+    checkSlotConflict,
   } = usePipeStore();
 
   const [trimDialogOpen, setTrimDialogOpen] = useState(false);
@@ -68,32 +67,35 @@ export const PipeDetailPanel: React.FC = () => {
   const [targetFreqWarning, setTargetFreqWarning] = useState<string[]>([]);
   const [measuredFreqError, setMeasuredFreqError] = useState<string[]>([]);
   const [measuredFreqWarning, setMeasuredFreqWarning] = useState<string[]>([]);
+  const [slotInput, setSlotInput] = useState('');
+  const [slotError, setSlotError] = useState('');
 
   const selectedPipe = pipes.find((p) => p.id === selectedPipeId);
 
   const slotConflictInfo = useMemo(() => {
-    if (!selectedPipe || selectedPipe.slotNumber === undefined) {
-      return { hasConflict: false, conflictingPipes: [] as Pipe[] };
+    const slotNum = parseInt(slotInput);
+    if (!selectedPipe || isNaN(slotNum) || slotNum <= 0) {
+      return { hasConflict: false, conflictingPipe: null as Pipe | null };
     }
-    const pipesInSlot = getPipesBySlot(selectedPipe.slotNumber).filter(
-      (p) => p.id !== selectedPipe.id
-    );
+    const conflictPipe = checkSlotConflict(slotNum, selectedPipe.id);
     return {
-      hasConflict: pipesInSlot.length > 0,
-      conflictingPipes: pipesInSlot,
+      hasConflict: !!conflictPipe,
+      conflictingPipe: conflictPipe,
     };
-  }, [selectedPipe?.id, selectedPipe?.slotNumber, getPipesBySlot]);
+  }, [slotInput, selectedPipe, checkSlotConflict]);
 
   useEffect(() => {
     if (selectedPipe) {
       setTargetFreqInput(selectedPipe.targetFrequency.toFixed(2));
       setMeasuredFreqInput(selectedPipe.measuredFrequency?.toFixed(2) ?? '');
+      setSlotInput(selectedPipe.slotNumber?.toString() ?? '');
       setTargetFreqError([]);
       setTargetFreqWarning([]);
       setMeasuredFreqError([]);
       setMeasuredFreqWarning([]);
+      setSlotError('');
     }
-  }, [selectedPipe?.id, selectedPipe?.targetFrequency, selectedPipe?.measuredFrequency]);
+  }, [selectedPipe?.id, selectedPipe?.targetFrequency, selectedPipe?.measuredFrequency, selectedPipe?.slotNumber]);
 
   const handleTargetFreqChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -203,10 +205,56 @@ export const PipeDetailPanel: React.FC = () => {
   };
 
   const handleSlotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSlotInput(value);
+
+    if (value === '') {
+      setSlotError('');
+      return;
+    }
+
+    const slotNum = parseInt(value);
+    if (isNaN(slotNum) || slotNum <= 0) {
+      setSlotError('请输入有效的槽位号');
+      return;
+    }
+
+    if (selectedPipe && checkSlotConflict(slotNum, selectedPipe.id)) {
+      setSlotError(`槽位 #${slotNum} 已被占用`);
+    } else {
+      setSlotError('');
+    }
+  };
+
+  const handleSlotBlur = () => {
     if (!selectedPipe) return;
-    const value = parseInt(e.target.value);
-    if (!isNaN(value) && value > 0) {
-      updatePipe(selectedPipe.id, { slotNumber: value });
+
+    if (slotInput === '') {
+      updatePipe(selectedPipe.id, { slotNumber: undefined });
+      setSlotError('');
+      return;
+    }
+
+    const slotNum = parseInt(slotInput);
+    if (isNaN(slotNum) || slotNum <= 0) {
+      setSlotInput(selectedPipe.slotNumber?.toString() ?? '');
+      setSlotError('');
+      return;
+    }
+
+    const result = updatePipe(selectedPipe.id, { slotNumber: slotNum });
+    if (!result.success && result.error) {
+      setSlotError(result.error);
+      setSlotInput(selectedPipe.slotNumber?.toString() ?? '');
+    } else {
+      setSlotError('');
+    }
+  };
+
+  const handleSlotKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSlotBlur();
+      (e.target as HTMLInputElement).blur();
     }
   };
 
@@ -431,22 +479,20 @@ export const PipeDetailPanel: React.FC = () => {
             fullWidth
             type="number"
             label="槽位号"
-            value={selectedPipe.slotNumber ?? ''}
+            value={slotInput}
             onChange={handleSlotChange}
+            onBlur={handleSlotBlur}
+            onKeyDown={handleSlotKeyDown}
             size="small"
             placeholder="可选"
-            sx={{ mb: slotConflictInfo.hasConflict ? 0.5 : 1, ...textFieldSx }}
-            error={slotConflictInfo.hasConflict}
-            helperText={
-              slotConflictInfo.hasConflict
-                ? `⚠️ 槽位冲突：已被 ${slotConflictInfo.conflictingPipes.map((p) => p.noteName).join('、')} 占用`
-                : ''
-            }
+            sx={{ mb: slotError ? 0.5 : 1, ...textFieldSx }}
+            error={!!slotError}
+            helperText={slotError || ''}
             slotProps={{
               htmlInput: { min: 1 },
               input: {
-                endAdornment: slotConflictInfo.hasConflict ? (
-                  <WarningIcon color="error" sx={{ fontSize: 18 }} />
+                endAdornment: slotError ? (
+                  <ErrorIcon color="error" sx={{ fontSize: 18 }} />
                 ) : null,
               },
               formHelperText: {
@@ -454,7 +500,7 @@ export const PipeDetailPanel: React.FC = () => {
               },
             }}
           />
-          {slotConflictInfo.hasConflict && (
+          {slotError && slotConflictInfo.conflictingPipe && (
             <Box
               sx={{
                 mb: 1,
@@ -465,24 +511,21 @@ export const PipeDetailPanel: React.FC = () => {
               }}
             >
               <Typography variant="caption" sx={{ color: theme.palette.error.main, fontSize: '0.7rem' }}>
-                {slotConflictInfo.conflictingPipes.length} 根音管共用此槽位
+                该槽位已被占用：
               </Typography>
-              {slotConflictInfo.conflictingPipes.map((p) => (
-                <Chip
-                  key={p.id}
-                  label={p.noteName}
-                  size="small"
-                  variant="outlined"
-                  sx={{
-                    mr: 0.5,
-                    mt: 0.5,
-                    height: 20,
-                    fontSize: '0.65rem',
-                    borderColor: theme.palette.error.main,
-                    color: theme.palette.error.main,
-                  }}
-                />
-              ))}
+              <Chip
+                label={slotConflictInfo.conflictingPipe.noteName}
+                size="small"
+                variant="outlined"
+                sx={{
+                  ml: 0.5,
+                  mt: 0.5,
+                  height: 20,
+                  borderColor: theme.palette.error.main,
+                  color: theme.palette.error.main,
+                  '& .MuiChip-label': { px: 0.5, fontSize: '0.7rem' },
+                }}
+              />
             </Box>
           )}
         </Box>

@@ -20,9 +20,9 @@ import { generateMockPipes, generateMockGroups } from '../utils/mockData';
 interface PipeStore extends WorkspaceState {
   setSelectedPipe: (id: string | null) => void;
   setSelectedGroup: (groupId: string | 'all') => void;
-  addPipe: (targetFrequency: number, noteName: string, groupId?: string, slotNumber?: number) => void;
+  addPipe: (targetFrequency: number, noteName: string, groupId?: string, slotNumber?: number) => { success: boolean; error?: string; pipeId?: string };
   removePipe: (id: string) => void;
-  updatePipe: (id: string, updates: Partial<Pipe>) => void;
+  updatePipe: (id: string, updates: Partial<Pipe>) => { success: boolean; error?: string };
   updatePipeFrequency: (id: string, measuredFrequency: number) => void;
   updateTargetFrequency: (id: string, targetFrequency: number) => void;
   movePipe: (fromIndex: number, toIndex: number) => void;
@@ -39,7 +39,7 @@ interface PipeStore extends WorkspaceState {
   batchAddPipes: (
     pipes: Array<{ targetFrequency: number; noteName: string; slotNumber?: number }>,
     groupId?: string
-  ) => void;
+  ) => { success: boolean; error?: string; addedCount: number; errors?: string[] };
   batchVerifyPipes: (pipeIds: string[]) => void;
   batchUpdateStatus: (pipeIds: string[], status: PipeStatus) => void;
   batchMoveToGroup: (pipeIds: string[], groupId: string | undefined) => void;
@@ -63,7 +63,10 @@ interface PipeStore extends WorkspaceState {
   setTotalSlots: (slots: number) => void;
   getSlotOccupancy: () => Array<{ slot: number; pipeId: string | null; pipe?: Pipe; conflict?: boolean }>;
   isSlotOccupied: (slotNumber: number, excludePipeId?: string) => boolean;
+  checkSlotConflict: (slotNumber: number, excludePipeId?: string) => Pipe | null;
   getPipesBySlot: (slotNumber: number) => Pipe[];
+
+  reorderPipesInGroup: (groupId: string | undefined, fromIndex: number, toIndex: number) => void;
 
   exportProject: () => ProjectFile;
   importProject: (project: ProjectFile, mode?: 'replace' | 'merge') => void;
@@ -148,10 +151,23 @@ export const usePipeStore = create<PipeStore>((set, get) => {
 
     setSelectedGroup: (groupId) => set({ selectedGroupId: groupId }),
 
-    addPipe: (targetFrequency, noteName, groupId, slotNumber) =>
+    addPipe: (targetFrequency, noteName, groupId, slotNumber) => {
+      const { pipes } = get();
+
+      if (slotNumber !== undefined && slotNumber !== null) {
+        const conflictPipe = pipes.find((p) => p.slotNumber === slotNumber);
+        if (conflictPipe) {
+          return {
+            success: false,
+            error: `槽位 #${slotNumber} 已被音管 ${conflictPipe.noteName} 占用`,
+          };
+        }
+      }
+
+      const newPipeId = uuidv4();
       set((state) => {
         const newPipe: Pipe = {
-          id: uuidv4(),
+          id: newPipeId,
           keyPosition: state.pipes.length + 1,
           noteName,
           targetFrequency,
@@ -166,7 +182,10 @@ export const usePipeStore = create<PipeStore>((set, get) => {
         return {
           pipes: [...state.pipes, newPipe],
         };
-      }),
+      });
+
+      return { success: true, pipeId: newPipeId };
+    },
 
     removePipe: (id) =>
       set((state) => {
@@ -198,12 +217,29 @@ export const usePipeStore = create<PipeStore>((set, get) => {
         };
       }),
 
-    updatePipe: (id, updates) =>
+    updatePipe: (id, updates) => {
+      const { pipes } = get();
+
+      if (updates.slotNumber !== undefined && updates.slotNumber !== null) {
+        const conflictPipe = pipes.find(
+          (p) => p.slotNumber === updates.slotNumber && p.id !== id
+        );
+        if (conflictPipe) {
+          return {
+            success: false,
+            error: `槽位 #${updates.slotNumber} 已被音管 ${conflictPipe.noteName} 占用`,
+          };
+        }
+      }
+
       set((state) => ({
         pipes: state.pipes.map((p) =>
           p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p
         ),
-      })),
+      }));
+
+      return { success: true };
+    },
 
     updatePipeFrequency: (id, measuredFrequency) => {
       if (measuredFrequency <= 0) return;
@@ -304,6 +340,59 @@ export const usePipeStore = create<PipeStore>((set, get) => {
           description: `移动音管: ${movedPipe.noteName} 从位置 ${fromIndex + 1} 到 ${toIndex + 1}`,
           pipeId: movedPipe.id,
           metadata: { fromIndex, toIndex },
+        };
+
+        return { pipes: repositioned, operationHistory: [...state.operationHistory, newRecord] };
+      }),
+
+    reorderPipesInGroup: (groupId, fromIndex, toIndex) =>
+      set((state) => {
+        const groupPipes = state.pipes
+          .filter((p) =>
+            groupId === undefined ? p.groupId === undefined : p.groupId === groupId
+          )
+          .sort((a, b) => a.keyPosition - b.keyPosition);
+
+        if (fromIndex < 0 || fromIndex >= groupPipes.length) return {};
+        if (toIndex < 0 || toIndex >= groupPipes.length) return {};
+        if (fromIndex === toIndex) return {};
+
+        const [movedPipe] = groupPipes.splice(fromIndex, 1);
+        groupPipes.splice(toIndex, 0, movedPipe);
+
+        const allPipes = [...state.pipes].sort((a, b) => a.keyPosition - b.keyPosition);
+        const groupPipeIds = new Set(groupPipes.map((p) => p.id));
+
+        let groupIdx = 0;
+        const newPipes: Pipe[] = [];
+
+        for (const pipe of allPipes) {
+          if (groupPipeIds.has(pipe.id)) {
+            newPipes.push(groupPipes[groupIdx]);
+            groupIdx++;
+          } else {
+            newPipes.push(pipe);
+          }
+        }
+
+        const repositioned = newPipes.map((p, idx) => {
+          const newPosition = idx + 1;
+          let status = p.status;
+          let needsReviewReason = p.needsReviewReason;
+          if (p.status === 'verified' && p.keyPosition !== newPosition) {
+            status = 'needs-review';
+            needsReviewReason = '位置变更需复核';
+          }
+          return { ...p, keyPosition: newPosition, status, needsReviewReason };
+        });
+
+        const newRecord: OperationRecord = {
+          id: uuidv4(),
+          type: 'move',
+          timestamp: new Date().toISOString(),
+          description: `分组内移动音管: ${movedPipe.noteName} 从位置 ${fromIndex + 1} 到 ${toIndex + 1}`,
+          pipeId: movedPipe.id,
+          metadata: { fromIndex, toIndex, groupId },
         };
 
         return { pipes: repositioned, operationHistory: [...state.operationHistory, newRecord] };
@@ -456,10 +545,47 @@ export const usePipeStore = create<PipeStore>((set, get) => {
         };
       }),
 
-    batchAddPipes: (pipesData, groupId) =>
+    batchAddPipes: (pipesData, groupId) => {
+      const { pipes: existingPipes } = get();
+      const errors: string[] = [];
+
+      const slotSet = new Set<number>();
+      const validData: typeof pipesData = [];
+
+      for (let i = 0; i < pipesData.length; i++) {
+        const data = pipesData[i];
+
+        if (data.slotNumber !== undefined && data.slotNumber !== null) {
+          const conflictExisting = existingPipes.find(
+            (p) => p.slotNumber === data.slotNumber
+          );
+          if (conflictExisting) {
+            errors.push(
+              `第 ${i + 1} 条：槽位 #${data.slotNumber} 已被音管 ${conflictExisting.noteName} 占用`
+            );
+            continue;
+          }
+
+          if (slotSet.has(data.slotNumber)) {
+            errors.push(
+              `第 ${i + 1} 条：槽位 #${data.slotNumber} 在批量数据中重复`
+            );
+            continue;
+          }
+
+          slotSet.add(data.slotNumber);
+        }
+
+        validData.push(data);
+      }
+
+      if (validData.length === 0) {
+        return { success: false, error: '没有可添加的有效音管', addedCount: 0, errors };
+      }
+
       set((state) => {
         let position = state.pipes.length;
-        const newPipes: Pipe[] = pipesData.map((data) => {
+        const newPipes: Pipe[] = validData.map((data) => {
           position++;
           return {
             id: uuidv4(),
@@ -480,16 +606,23 @@ export const usePipeStore = create<PipeStore>((set, get) => {
           id: uuidv4(),
           type: 'batch-add',
           timestamp: new Date().toISOString(),
-          description: `批量添加 ${pipesData.length} 根音管`,
+          description: `批量添加 ${validData.length} 根音管`,
           pipeIds: newPipes.map((p) => p.id),
-          metadata: { count: pipesData.length, groupId },
+          metadata: { count: validData.length, groupId, errors },
         };
 
         return {
           pipes: [...state.pipes, ...newPipes],
           operationHistory: [...state.operationHistory, opRecord],
         };
-      }),
+      });
+
+      return {
+        success: true,
+        addedCount: validData.length,
+        errors: errors.length > 0 ? errors : undefined,
+      };
+    },
 
     batchVerifyPipes: (pipeIds) =>
       set((state) => {
@@ -714,6 +847,11 @@ export const usePipeStore = create<PipeStore>((set, get) => {
     isSlotOccupied: (slotNumber, excludePipeId) => {
       const { pipes } = get();
       return pipes.some((p) => p.slotNumber === slotNumber && p.id !== excludePipeId);
+    },
+
+    checkSlotConflict: (slotNumber, excludePipeId) => {
+      const { pipes } = get();
+      return pipes.find((p) => p.slotNumber === slotNumber && p.id !== excludePipeId) || null;
     },
 
     getPipesBySlot: (slotNumber) => {

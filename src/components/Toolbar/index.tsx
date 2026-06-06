@@ -52,6 +52,7 @@ export const ToolbarComponent: React.FC = () => {
     addGroup,
     togglePitchDetectionPanel,
     showPitchDetectionPanel,
+    checkSlotConflict,
   } = usePipeStore();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -65,6 +66,7 @@ export const ToolbarComponent: React.FC = () => {
   const [newTargetFreq, setNewTargetFreq] = useState('261.63');
   const [newSlotNumber, setNewSlotNumber] = useState('');
   const [newGroupId, setNewGroupId] = useState('');
+  const [slotError, setSlotError] = useState('');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
 
@@ -83,14 +85,51 @@ export const ToolbarComponent: React.FC = () => {
     setNewTargetFreq('261.63');
     setNewSlotNumber('');
     setNewGroupId('');
+    setSlotError('');
+  };
+
+  const handleSlotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setNewSlotNumber(value);
+
+    if (value === '') {
+      setSlotError('');
+      return;
+    }
+
+    const slotNum = parseInt(value);
+    if (isNaN(slotNum) || slotNum <= 0) {
+      setSlotError('请输入有效的槽位号');
+      return;
+    }
+
+    const conflictPipe = checkSlotConflict(slotNum);
+    if (conflictPipe) {
+      setSlotError(`槽位 #${slotNum} 已被音管 ${conflictPipe.noteName} 占用`);
+    } else {
+      setSlotError('');
+    }
   };
 
   const handleAddConfirm = () => {
     const freq = parseFloat(newTargetFreq);
     const slot = newSlotNumber ? parseInt(newSlotNumber) : undefined;
-    if (!isNaN(freq) && freq > 0) {
-      addPipe(freq, getNoteName(freq), newGroupId || undefined, slot);
+
+    if (isNaN(freq) || freq <= 0) return;
+
+    if (slot !== undefined) {
+      const conflictPipe = checkSlotConflict(slot);
+      if (conflictPipe) {
+        setSlotError(`槽位 #${slot} 已被音管 ${conflictPipe.noteName} 占用`);
+        return;
+      }
+    }
+
+    const result = addPipe(freq, getNoteName(freq), newGroupId || undefined, slot);
+    if (result.success) {
       setAddDialogOpen(false);
+    } else if (result.error) {
+      setSlotError(result.error);
     }
   };
 
@@ -478,11 +517,18 @@ export const ToolbarComponent: React.FC = () => {
                 type="number"
                 label="槽位号（可选）"
                 value={newSlotNumber}
-                onChange={(e) => setNewSlotNumber(e.target.value)}
+                onChange={handleSlotChange}
                 size="small"
                 sx={textFieldSx}
+                error={!!slotError}
+                helperText={slotError || ''}
                 slotProps={{
                   htmlInput: { min: 1 },
+                  formHelperText: {
+                    sx: {
+                      color: 'error.main',
+                    },
+                  },
                 }}
               />
             </Box>
