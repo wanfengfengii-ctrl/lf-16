@@ -18,10 +18,29 @@ interface PipeStore extends WorkspaceState {
   recalculateAllDeviations: () => void;
 }
 
-export const usePipeStore = create<PipeStore>((set, get) => ({
-  pipes: generateMockPipes(),
-  selectedPipeId: null,
-  allowedCentsDeviation: 5,
+export const usePipeStore = create<PipeStore>((set, get) => {
+  const initialPipes = (() => {
+    const pipes = generateMockPipes();
+    const defaultDeviation = 5;
+    return pipes.map((p) => {
+      if (p.centsDeviation === undefined || p.measuredFrequency === undefined) {
+        return p;
+      }
+      const absCents = Math.abs(p.centsDeviation);
+      let status = p.status;
+      if (absCents <= defaultDeviation) {
+        status = 'verified';
+      } else if (p.status === 'verified') {
+        status = 'needs-review';
+      }
+      return { ...p, status };
+    });
+  })();
+
+  return {
+    pipes: initialPipes,
+    selectedPipeId: null,
+    allowedCentsDeviation: 5,
 
   setSelectedPipe: (id) => set({ selectedPipeId: id }),
 
@@ -72,6 +91,14 @@ export const usePipeStore = create<PipeStore>((set, get) => ({
 
         if (p.status === 'tuning') {
           status = absCents <= state.allowedCentsDeviation ? 'verified' : 'tuning';
+        } else if (p.status === 'verified') {
+          if (absCents > state.allowedCentsDeviation) {
+            status = 'needs-review';
+          }
+        } else if (p.status === 'needs-review') {
+          if (absCents <= state.allowedCentsDeviation) {
+            status = 'verified';
+          }
         }
 
         return {
@@ -96,10 +123,24 @@ export const usePipeStore = create<PipeStore>((set, get) => ({
         const cents = p.measuredFrequency
           ? calculateCentsDeviation(targetFrequency, p.measuredFrequency)
           : undefined;
+        let status: PipeStatus = p.status;
+        
+        if (p.status === 'verified') {
+          status = 'needs-review';
+        } else if (cents !== undefined) {
+          const absCents = Math.abs(cents);
+          if (absCents <= state.allowedCentsDeviation) {
+            status = 'verified';
+          } else {
+            status = p.status === 'needs-review' ? 'needs-review' : 'tuning';
+          }
+        }
+
         return {
           ...p,
           targetFrequency,
           centsDeviation: cents,
+          status,
           updatedAt: new Date().toISOString(),
         };
       });
@@ -141,7 +182,27 @@ export const usePipeStore = create<PipeStore>((set, get) => ({
       };
     }),
 
-  setAllowedDeviation: (cents) => set({ allowedCentsDeviation: cents }),
+  setAllowedDeviation: (cents) =>
+    set((state) => {
+      const pipes = state.pipes.map((p) => {
+        if (p.centsDeviation === undefined || p.measuredFrequency === undefined) {
+          return p;
+        }
+        const absCents = Math.abs(p.centsDeviation);
+        let status = p.status;
+
+        if (p.status === 'tuning') {
+          status = absCents <= cents ? 'verified' : 'tuning';
+        } else if (p.status === 'verified') {
+          status = absCents > cents ? 'needs-review' : 'verified';
+        } else if (p.status === 'needs-review') {
+          status = absCents <= cents ? 'verified' : 'needs-review';
+        }
+
+        return { ...p, status };
+      });
+      return { allowedCentsDeviation: cents, pipes };
+    }),
 
   updatePipeStatus: (id, status) =>
     set((state) => ({
@@ -158,4 +219,5 @@ export const usePipeStore = create<PipeStore>((set, get) => ({
         return { ...p, centsDeviation: cents };
       }),
     })),
-}));
+  };
+});

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -51,22 +51,52 @@ export const PipeDetailPanel: React.FC = () => {
   const [trimDialogOpen, setTrimDialogOpen] = useState(false);
   const [trimDescription, setTrimDescription] = useState('');
   const [newMeasuredFreq, setNewMeasuredFreq] = useState('');
+  const [targetFreqInput, setTargetFreqInput] = useState('');
+  const [measuredFreqInput, setMeasuredFreqInput] = useState('');
 
   const selectedPipe = pipes.find((p) => p.id === selectedPipeId);
 
-  const handleTargetFreqChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseFloat(e.target.value);
-    if (selectedPipe && !isNaN(value) && value > 0) {
+  useEffect(() => {
+    if (selectedPipe) {
+      setTargetFreqInput(selectedPipe.targetFrequency.toFixed(2));
+      setMeasuredFreqInput(selectedPipe.measuredFrequency?.toFixed(2) ?? '');
+    }
+  }, [selectedPipe?.id, selectedPipe?.targetFrequency, selectedPipe?.measuredFrequency]);
+
+  const handleTargetFreqBlur = () => {
+    if (!selectedPipe) return;
+    const value = parseFloat(targetFreqInput);
+    if (!isNaN(value) && value > 0) {
       updateTargetFrequency(selectedPipe.id, value);
       const newNoteName = getNoteName(value);
       updatePipe(selectedPipe.id, { noteName: newNoteName });
+    } else {
+      setTargetFreqInput(selectedPipe.targetFrequency.toFixed(2));
     }
   };
 
-  const handleMeasuredFreqChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseFloat(e.target.value);
-    if (selectedPipe && !isNaN(value) && value > 0) {
+  const handleTargetFreqKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleTargetFreqBlur();
+      (e.target as HTMLInputElement).blur();
+    }
+  };
+
+  const handleMeasuredFreqBlur = () => {
+    if (!selectedPipe) return;
+    const value = parseFloat(measuredFreqInput);
+    if (!isNaN(value) && value > 0) {
       updatePipeFrequency(selectedPipe.id, value);
+    } else if (measuredFreqInput === '') {
+    } else {
+      setMeasuredFreqInput(selectedPipe.measuredFrequency?.toFixed(2) ?? '');
+    }
+  };
+
+  const handleMeasuredFreqKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleMeasuredFreqBlur();
+      (e.target as HTMLInputElement).blur();
     }
   };
 
@@ -199,42 +229,32 @@ export const PipeDetailPanel: React.FC = () => {
 
           <TextField
             fullWidth
-            type="number"
+            type="text"
             label="目标频率 (Hz)"
-            value={selectedPipe.targetFrequency.toFixed(2)}
-            onChange={handleTargetFreqChange}
-            onBlur={(e) => {
-              const value = parseFloat(e.target.value);
-              if (!isNaN(value) && value > 0) {
-                updateTargetFrequency(selectedPipe.id, value);
-                const newNoteName = getNoteName(value);
-                updatePipe(selectedPipe.id, { noteName: newNoteName });
-              }
-            }}
+            value={targetFreqInput}
+            onChange={(e) => setTargetFreqInput(e.target.value)}
+            onBlur={handleTargetFreqBlur}
+            onKeyDown={handleTargetFreqKeyDown}
             size="small"
             sx={{ mb: 2, ...textFieldSx }}
             slotProps={{
-              htmlInput: { min: 0, step: 0.01 },
+              htmlInput: { inputMode: 'decimal' },
             }}
           />
 
           <TextField
             fullWidth
-            type="number"
+            type="text"
             label="实测频率 (Hz)"
-            value={selectedPipe.measuredFrequency?.toFixed(2) ?? ''}
-            onChange={handleMeasuredFreqChange}
-            onBlur={(e) => {
-              const value = parseFloat(e.target.value);
-              if (!isNaN(value) && value > 0) {
-                updatePipeFrequency(selectedPipe.id, value);
-              }
-            }}
+            value={measuredFreqInput}
+            onChange={(e) => setMeasuredFreqInput(e.target.value)}
+            onBlur={handleMeasuredFreqBlur}
+            onKeyDown={handleMeasuredFreqKeyDown}
             size="small"
             placeholder="输入实测频率"
             sx={textFieldSx}
             slotProps={{
-              htmlInput: { min: 0, step: 0.01 },
+              htmlInput: { inputMode: 'decimal' },
             }}
           />
         </Box>
